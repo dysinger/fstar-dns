@@ -97,12 +97,18 @@ type hostname = {
    ======================================================================== *)
 
 
-(** [is_dot] — the RFC 1035 §3.1 label separator (`.` = 0x2E). *)
+(** [is_dot] — the RFC 1035 §3.1 label separator (`.` = 0x2E).
+
+    @param b The byte to test.
+    @returns [true] iff [b] is the dot separator ([0x2E]). *)
 let is_dot (b: byte) : bool = U8.v b = 0x2E
 
 
 (** [is_label_char] — the RFC 1035 §3.1 label character predicate:
-    `A-Z a-z 0-9 -`. *)
+    `A-Z a-z 0-9 -`.
+
+    @param b The byte to test.
+    @returns [true] iff [b] is in the label alphabet. *)
 let is_label_char (b: byte) : bool =
   let v = U8.v b in
   (0x41 <= v && v <= 0x5A) || (0x61 <= v && v <= 0x7A) ||
@@ -112,7 +118,11 @@ let is_label_char (b: byte) : bool =
 (** [label_wfcv] — a [domain_label] is well-formed: a non-empty run of label
     characters at most 63 octets.  (A local [bool] mirror of [label_codec]'s
     guard, so the roundtrip lemmas can discharge it structurally rather than
-    through the opaque [codec] fields.) *)
+    through the opaque [codec] fields.)
+
+    @param dl The label to test.
+    @returns [true] iff [dl.label_bytes] is a non-empty run of label chars of
+             length at most 63. *)
 let label_wfcv (dl: domain_label) : bool =
   Cons? dl.label_bytes && List.Tot.for_all is_label_char dl.label_bytes &&
   List.Tot.length dl.label_bytes <= 63
@@ -148,7 +158,12 @@ let label_codec : codec domain_label =
 
     Walks [bs] with two accumulators: the current label run [cur] (reversed)
     and the collected labels [acc] (reversed).  The dot closes a label; the end
-    of input closes the last label.  Returns [None] on any malformed input. *)
+    of input closes the last label.  Returns [None] on any malformed input.
+
+    @param bs  The remaining input bytes.
+    @param cur The current label run (reversed).
+    @param acc The collected labels (reversed).
+    @returns [Some d] on a complete parse, [None] on malformed input. *)
 let rec decode_domain_go (bs: list byte) (cur: list byte) (acc: list domain_label)
   : option domain_name
   =
@@ -173,12 +188,18 @@ let rec decode_domain_go (bs: list byte) (cur: list byte) (acc: list domain_labe
 
 
 (** [decode_domain] — parse the dotted form [label ('.' label)*] into a
-    [domain_name]; [None] unless the whole input is consumed. *)
+    [domain_name]; [None] unless the whole input is consumed.
+
+    @param bs The dotted byte list.
+    @returns [Some d] when [bs] is exactly the dotted form, else [None]. *)
 let decode_domain (bs: list byte) : option domain_name =
   decode_domain_go bs [] []
 
 
-(** [encode_label_list] — serialize a single label to its raw octet list. *)
+(** [encode_label_list] — serialize a single label to its raw octet list.
+
+    @param dl The label to serialize.
+    @returns [dl.label_bytes]. *)
 let encode_label_list (dl: domain_label) : list byte = dl.label_bytes
 
 
@@ -186,7 +207,10 @@ let encode_label_list (dl: domain_label) : list byte = dl.label_bytes
     [label ('.' label)*] (dots BETWEEN labels, no trailing dot — matching the
     RFC 1035 §3.1 text form; the [fully_qualified] flag is not part of the
     text form's byte encoding, exactly as the original [domain_codec.enc]).
-    Recurses on the list (structural decrease). *)
+    Recurses on the list (structural decrease).
+
+    @param ls The labels, in left-to-right order.
+    @returns The dotted byte list. *)
 let rec encode_labels (ls: list domain_label) : list byte =
   match ls with
   | [] -> []
@@ -195,7 +219,10 @@ let rec encode_labels (ls: list domain_label) : list byte =
     lbl.label_bytes @ (0x2Euy :: encode_labels tl)
 
 
-(** [encode_domain] — serialize a [domain_name] to the dotted form. *)
+(** [encode_domain] — serialize a [domain_name] to the dotted form.
+
+    @param d The name to serialize.
+    @returns The dotted byte list of [d.labels]. *)
 let encode_domain (d: domain_name) : list byte =
   encode_labels d.labels
 
@@ -205,31 +232,46 @@ let encode_domain (d: domain_name) : list byte =
    ======================================================================== *)
 
 
-(** [ascii_bytes_to_string] — ASCII [list byte] to [string] (code points < 128). *)
+(** [ascii_bytes_to_string] — ASCII [list byte] to [string] (code points < 128).
+
+    @param bs The ASCII byte list.
+    @returns The reconstructed [string]. *)
 let ascii_bytes_to_string (bs: list byte) : string =
   FStar.String.string_of_list
     (List.Tot.map (fun (b: byte) -> FStar.Char.char_of_int (U8.v b)) bs)
 
 
 (** [string_to_ascii_bytes] — [string] to [list byte], truncating code points
-    via `% 256`.  Only valid for ASCII strings. *)
+    via `% 256`.  Only valid for ASCII strings.
+
+    @param s The [string] to convert.
+    @returns The byte list (ASCII only). *)
 let string_to_ascii_bytes (s: string) : list byte =
   List.Tot.map (fun (c: FStar.Char.char) -> U8.uint_to_t (FStar.Char.int_of_char c % 256))
     (FStar.String.list_of_string s)
 
 
-(** [string_of_domain] — serialize a [domain_name] to its dotted text. *)
+(** [string_of_domain] — serialize a [domain_name] to its dotted text.
+
+    @param d The name to serialize.
+    @returns The dotted text (ASCII). *)
 let string_of_domain (d: domain_name) : Tot string =
   ascii_bytes_to_string (encode_domain d)
 
 
 (** [domain_of_string] — parse a dotted text string into a [domain_name];
-    [None] unless the whole string is consumed by [decode_domain]. *)
+    [None] unless the whole string is consumed by [decode_domain].
+
+    @param s The dotted text string.
+    @returns [Some d] on a complete parse, else [None]. *)
 let domain_of_string (s: string) : GTot (option domain_name) =
   decode_domain (string_to_ascii_bytes s)
 
 
-(** [hostname_of_string] — parse a dotted text string into a [hostname]. *)
+(** [hostname_of_string] — parse a dotted text string into a [hostname].
+
+    @param s The dotted text string.
+    @returns [Some h] on a complete parse, else [None]. *)
 let hostname_of_string (s: string) : GTot (option hostname) =
   match domain_of_string s with
   | Some d -> Some ({ name = d })
@@ -241,7 +283,11 @@ let hostname_of_string (s: string) : GTot (option hostname) =
    ======================================================================== *)
 
 
-(** [domain_of_labels] — construct a [domain_name] from a label list + flag. *)
+(** [domain_of_labels] — construct a [domain_name] from a label list + flag.
+
+    @param ls The labels.
+    @param fq The fully-qualified flag.
+    @returns The name [ { labels = ls; fully_qualified = fq } ]. *)
 let domain_of_labels (ls: list domain_label) (fq: bool) : domain_name =
   { labels = ls; fully_qualified = fq }
 
@@ -257,7 +303,12 @@ let root_domain : domain_name = { labels = []; fully_qualified = true }
 
 (** [lemma_decode_go_run] — [decode_domain_go] consuming a pure label-char run
     [run] starting from accumulator [cur] accumulates [rev run @ cur]:
-    [decode_domain_go (run @ more) cur [] == decode_domain_go more (rev run @ cur) []]. *)
+    [decode_domain_go (run @ more) cur [] == decode_domain_go more (rev run @ cur) []].
+
+    @param run  A run of label characters.
+    @param more The bytes after the run.
+    @param cur  The starting accumulator.
+    Requires [run] to be all label characters. *)
 #push-options "--z3rlimit 400"
 let rec lemma_decode_go_run (run more cur: list byte) : Lemma
   (requires List.Tot.for_all is_label_char run)
@@ -277,7 +328,10 @@ let rec lemma_decode_go_run (run more cur: list byte) : Lemma
 
 (** [lemma_decode_single_label] — decoding a single well-formed label's bytes
     alone ([encode_domain { labels = [lbl]; fully_qualified = false }] ==
-    lbl.label_bytes]) recovers the label. *)
+    lbl.label_bytes]) recovers the label.
+
+    @param lbl The label (require [label_wfcv lbl]).
+    Ensures [decode_domain lbl.label_bytes == Some { labels = [lbl]; fully_qualified = false }]. *)
 #push-options "--z3rlimit 400"
 let lemma_decode_single_label (lbl: domain_label) : Lemma
   (requires label_wfcv lbl)
@@ -292,7 +346,10 @@ let lemma_decode_single_label (lbl: domain_label) : Lemma
 
 
 (** [lemma_domain_length] — the dotted encoding of a well-formed single label
-    is at most 63 octets. *)
+    is at most 63 octets.
+
+    @param dl The label (require [label_wfcv dl]).
+    Ensures [List.Tot.length (encode_label_list dl) <= 63]. *)
 let lemma_domain_length (dl: domain_label) : Lemma
   (requires label_wfcv dl)
   (ensures List.Tot.length (encode_label_list dl) <= 63)
@@ -300,7 +357,11 @@ let lemma_domain_length (dl: domain_label) : Lemma
 
 
 (** [lemma_encode_domain_roundtrip] — roundtrip of the dotted form for a
-    single label: [decode_domain (encode_domain d) == Some d]. *)
+    single label: [decode_domain (encode_domain d) == Some d].
+
+    @param d The name (require [fully_qualified = false] and a single
+             well-formed label).
+    Ensures [decode_domain (encode_domain d) == Some d]. *)
 #push-options "--z3rlimit 400"
 let lemma_encode_domain_roundtrip (d: domain_name) : Lemma
   (requires d.fully_qualified = false /\
@@ -336,7 +397,10 @@ let lemma_example_com_concrete () : Lemma
 
 
 (** [lemma_label_codec_roundtrip] — the single-label codec roundtrip: decoding
-    the encoding of a well-formed label recovers the label. *)
+    the encoding of a well-formed label recovers the label.
+
+    @param dl The label (require [label_wfcv dl]).
+    Ensures [label_codec.dec (label_codec.enc dl ++ empty) == Inr (dl, |enc dl|)]. *)
 let lemma_label_codec_roundtrip (dl: domain_label) : Lemma
   (requires label_wfcv dl)
   (ensures label_codec.dec (label_codec.enc dl `Seq.append` Seq.empty)
@@ -354,7 +418,10 @@ let lemma_label_concrete () : Lemma
   = ()
 
 
-(** [lemma_label_length] — a well-formed label run is 1..63 octets. *)
+(** [lemma_label_length] — a well-formed label run is 1..63 octets.
+
+    @param dl The label (require [label_wfcv dl]).
+    Ensures [Cons? dl.label_bytes /\\ |dl.label_bytes| <= 63]. *)
 let lemma_label_length (dl: domain_label) : Lemma
   (requires label_wfcv dl)
   (ensures Cons? dl.label_bytes /\ List.Tot.length dl.label_bytes <= 63)

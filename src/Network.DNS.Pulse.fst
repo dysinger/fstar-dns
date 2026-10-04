@@ -79,7 +79,11 @@ type opt_label3 =
 
 
 (** [label3_of_indices] — reconstruct a [label3] from a sequence's 3 indices
-    (the offset refinement makes each [Seq.index] well-typed). *)
+    (the offset refinement makes each [Seq.index] well-typed).
+
+    @param s   The source sequence.
+    @param off The start index (require [off + 2 < Seq.length s]).
+    @returns The label [ { b0 = s[off]; b1 = s[off+1]; b2 = s[off+2] } ]. *)
 noextract
 let label3_of_indices (s: Seq.seq U8.t) (off: nat { off + 2 < Seq.length s }) : label3 =
   { b0 = Seq.index s off;
@@ -88,7 +92,10 @@ let label3_of_indices (s: Seq.seq U8.t) (off: nat { off + 2 < Seq.length s }) : 
   }
 
 
-(** [label3_to_seq] — the pure map from a [label3] to its 3 content octets. *)
+(** [label3_to_seq] — the pure map from a [label3] to its 3 content octets.
+
+    @param l The label.
+    @returns [seq_of_list [l.b0; l.b1; l.b2]]. *)
 noextract
 let label3_to_seq (l: label3) : Seq.seq U8.t =
   Seq.seq_of_list [l.b0; l.b1; l.b2]
@@ -193,6 +200,7 @@ fn decode_label (buf: A.array U8.t) (off: U32.t)
     @param l The label to roundtrip.
     @param buf The buffer (must hold at least 5 bytes at [off]).
     @param off The offset.
+    @returns [(5ul, OEL_Some (l, 5ul))].
     Proves [decode_label buf off] after [encode_label l buf off] returns
     [OEL_Some (l, 5ul)], and the `0x00` terminator remains at [off + 4]. *)
 fn lemma_pulse_label_roundtrip (l: label3) (buf: A.array U8.t) (off: U32.t)
