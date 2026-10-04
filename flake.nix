@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 {
-  description = "Minimal verified F* project template (example)";
+  description = "dns — verified DNS (RFC 1034/1035) library";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/c31cf09";
@@ -14,6 +14,11 @@
       url = "github:dysinger/fstar/v2026.09.20+lsp";
       flake = false;
     };
+    # The codec dependency (Data.Codec.Types).  Consumed from the published
+    # `dysinger/fstar-codec` GitHub repo, pinned to the commit that ships the
+    # variable-width `satisfy_many0`/`satisfy_many1` predicate-run combinators
+    # (DNS's label run needs `satisfy_many1`).
+    fstar-codec.url = "github:dysinger/fstar-codec/ed478e173c188f80bbb76ca461f6b52430a50a11";
   };
 
   outputs =
@@ -22,6 +27,7 @@
       nixpkgs,
       flake-utils,
       treefmt-nix,
+      fstar-codec,
       ...
     }:
     flake-utils.lib.eachDefaultSystem (
@@ -54,6 +60,7 @@
                 ocamlPackages = prev.ocaml-ng.ocamlPackages_5_3;
                 z3 = prev.callPackage (inputs.fstar + "/.nix/z3.nix") { };
                 version = "2026.09.20+lsp";
+
                 fstar =
                   (ocamlPackages.callPackage (inputs.fstar + "/.nix/fstar.nix") {
                     inherit version z3;
@@ -63,9 +70,15 @@
                   }).overrideAttrs
                     (old: {
                       nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ prev.git ];
-                      # Raise the bootstrap rlimit: the default (5) makes the
-                      # 4-stage F* bootstrap's FStar.Math.Fermat.binomial_theorem
-                      # deterministically time out under z3 4.13.3.
+                      # The 4-stage bootstrap verifies ulib with the default z3
+                      # rlimit (5).  `FStar.Math.Fermat.binomial_theorem` has always
+                      # been flaky (see its git history of "tweak rlimit"/"stabilize
+                      # proofs") and deterministically times out under z3 4.13.3,
+                      # failing the stage2 `.checked` verification.  Raise the global
+                      # rlimit so the bootstrap is deterministic.  OTHERFLAGS is
+                      # appended to FSTAR_OPTIONS by mk/generic-1.mk and flows to the
+                      # nested `make -f mk/lib.mk` (the .alib2.src.touch recipe does
+                      # not re-specify it, unlike fsharp-lib.src).
                       buildPhase = ''
                         export PATH="${z3}/bin:$PATH"
                         export FSTAR_USE_KRML_EXE=1 KRML_EXE=/bin/true
@@ -78,16 +91,22 @@
                         mkdir -p karamel
                         printf 'all:\n\t@true\ninstall:\n\t@true\n' > karamel/Makefile
                         PREFIX=$out make install
+
                         for binary in $out/bin/*
                         do
                           wrapProgram $binary --prefix PATH ":" ${z3}/bin
                         done
+
                         cd $out
                         installShellCompletion --bash ${inputs.fstar + "/.completion/bash/fstar.exe.bash"}
                         installShellCompletion --fish ${inputs.fstar + "/.completion/fish/fstar.exe.fish"}
                         installShellCompletion --zsh --name _fstar.exe ${inputs.fstar + "/.completion/zsh/__fstar.exe"}
                       '';
                     });
+
+                # fstar-checked: ulib .checked files (pre-verified by the fstar
+                # compiler), seeded into the cache so `make check` can write our
+                # own modules' .checked stamps.
                 fstar-checked = prev.runCommand "fstar-checked" { nativeBuildInputs = [ fstar ]; } ''
                   mkdir -p $out
                   cp ${fstar}/lib/fstar/ulib.checked/*.checked $out/ 2>/dev/null || true
@@ -111,6 +130,12 @@
           ;
         inherit (pkgs) ocamlPackages;
 
+        # The codec dependency's source + checked artifacts come from the
+        # fstar-codec flake input (its `checked` package is the pre-verified
+        # `.checked` set; its source is the flake's own tree).
+        codec-src = fstar-codec;
+        codec-checked = fstar-codec.packages.${system}.checked;
+
         _pkg = import ./default.nix {
           inherit
             fstar
@@ -118,6 +143,8 @@
             lib
             ocamlPackages
             stdenv
+            codec-src
+            codec-checked
             ;
           dotnet = dotnet-sdk_10;
         };
@@ -130,29 +157,29 @@
 
         checks.formatting = treefmtModule.config.build.check self;
 
-        # The build targets are named by deliverable (no `example-`
-        # prefix), mirroring codec exactly: `default` aliases `native`
-        # (the C11 shared/static lib), plus `checked`/`ocaml`/`fsharp`.
-        # `cli` is the one template-only addition (codec has no CLI).
-        # Note `native` IS `checked`+`ocaml`+`fsharp`'s sibling; the four
-        # library targets are exactly codec's set.
+        # The build targets are named by deliverable (no `dns-`
+        # prefix); `default` aliases `native` (the C11 shared/static lib).
         packages.default = _pkg.native;
         packages.checked = _pkg.checked;
         packages.ocaml = _pkg.ocaml;
         packages.native = _pkg.native;
         packages.fsharp = _pkg.fsharp;
-        packages.cli = _pkg.cli;
-
-        apps = {
-          default = flake-utils.lib.mkApp { drv = self.packages.${system}.cli; };
-          cli = flake-utils.lib.mkApp { drv = self.packages.${system}.cli; };
-        };
 
         devShells.default = pkgs.mkShell {
           dontDetectOcamlConflicts = true;
           shellHook = ''
             export FSTAR_CHECKED="${fstar-checked}"
+            export CODEC_SRC="${codec-src}"
+            export CODEC_CHECKED="${codec-checked}"
           '';
+          # Note: z3 is not listed here on purpose.  The `fstar.exe` wrapper
+          # already prepends the correct z3 (4.13.3, from the fstar fork's
+          # .nix/z3.nix) onto its own PATH, so `fstar.exe`/`make check` find
+          # it.  Exposing that z3 as a separate top-level attr triggers a nix
+          # fixpoint stack-overflow (the overlay's `z3 = prev.callPackage
+          # (inputs.fstar + "/.nix/z3.nix")` self-references when inherited
+          # back out).  `git` + `dotnet-sdk_10` are present for the fsharp
+          # target and the fstar bootstrap.
           buildInputs = with pkgs; [
             fstar
             dotnet-sdk_10
@@ -162,30 +189,5 @@
           ];
         };
       }
-    )
-    // {
-      # Nix flake template (`nix flake init -t .`).  The path is the repository
-      # root: `init` copies flake.nix, default.nix, Makefile, src/ directly.
-      templates.default = {
-        path = ./.;
-        description = "Minimal verified F* project: Custard C/OCaml extraction + a packaged CLI";
-        welcomeText = ''
-          # F* verified project template
-
-          A verified F* library (pure spec + Pulse leaf) extracted to C and
-          OCaml via Custard, plus a packaged command-line executable.
-
-          Create a new project (see README):
-
-          1. nix flake init -t github:dysinger/fstar-nix-flake-template
-          2. rename the example modules + edit `pname` (see "Renaming" in README)
-          3. nix build
-
-          - Build everything: nix build \
-              .#checked .#ocaml .#native .#fsharp .#cli
-          - Dev loop:   nix develop && make check
-          - Run the CLI: nix run .#cli
-        '';
-      };
-    };
+    );
 }

@@ -1,7 +1,7 @@
 <div align="center">
   <h1>License</h1>
-  <p><strong>example</strong> — a minimal verified F* project
-  template that extracts to C, OCaml, and F# via Custard.</p>
+  <p><strong>dns</strong> — a formally verified DNS (RFC 1034/1035)
+  library written in F\*.</p>
 </div>
 
 ---
