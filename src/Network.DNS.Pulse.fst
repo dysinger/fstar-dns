@@ -78,12 +78,6 @@ type opt_label3 =
 (* ── Pure spec (noextract) ──────────────────────────────────────────── *)
 
 
-(** [label3_to_seq] — the pure map from a [label3] to its 3 content octets. *)
-noextract
-let label3_to_seq (l: label3) : Seq.seq U8.t =
-  Seq.seq_of_list [l.b0; l.b1; l.b2]
-
-
 (** [label3_of_indices] — reconstruct a [label3] from a sequence's 3 indices
     (the offset refinement makes each [Seq.index] well-typed). *)
 noextract
@@ -92,6 +86,12 @@ let label3_of_indices (s: Seq.seq U8.t) (off: nat { off + 2 < Seq.length s }) : 
     b1 = Seq.index s (off + 1);
     b2 = Seq.index s (off + 2);
   }
+
+
+(** [label3_to_seq] — the pure map from a [label3] to its 3 content octets. *)
+noextract
+let label3_to_seq (l: label3) : Seq.seq U8.t =
+  Seq.seq_of_list [l.b0; l.b1; l.b2]
 
 
 (** [label_len_byte] — the wire length byte for a [label3] (always [0x03]). *)
