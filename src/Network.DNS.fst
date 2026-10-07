@@ -24,7 +24,6 @@ GADT [make_codec]/[encode_spec]/[decode_spec] surface is deleted).  Zero admits.
 - [hostname] — a [domain_name]
 
 @section Predicates
-- [is_dot] — the `.` separator
 - [is_label_char] — the RFC 1035 §3.1 label run predicate
 - [label_wfcv] — a well-formed label (non-empty, ≤ 63 label chars)
 
@@ -96,13 +95,6 @@ type hostname = {
    ======================================================================== *)
 
 
-(** [is_dot] — the RFC 1035 §3.1 label separator (`.` = 0x2E).
-
-    @param b The byte to test.
-    @returns [true] iff [b] is the dot separator ([0x2E]). *)
-let is_dot (b: byte) : bool = U8.v b = 0x2E
-
-
 (** [is_label_char] — the RFC 1035 §3.1 label character predicate:
     `A-Z a-z 0-9 -`.
 
@@ -144,7 +136,8 @@ let label_wfcv (dl: domain_label) : bool =
 let label_codec : codec domain_label =
   map_
     (fun (bs: list byte) -> if Cons? bs && List.Tot.length bs <= 63 then Some ({ label_bytes = bs }) else None)
-    (fun (dl: domain_label) -> Some dl.label_bytes)
+    (fun (dl: domain_label) ->
+       if label_wfcv dl then Some dl.label_bytes else None)
     (satisfy_many1 is_label_char)
 
 
@@ -165,9 +158,10 @@ let domain_codec : codec (list domain_label) =
 
 
 (** [domain_wfcv] — a non-empty label list is well-formed for [domain_codec]:
-    definitionally [domain_codec.wfcv ls] (each label is a [label_wfcv] label
-    and there are at most 127 labels — RFC 1035 §2.3.4 bounds a name's label
-    count). *)
+    definitionally [domain_codec.wfcv ls] — each label is a [label_wfcv] label,
+    there are at most 127 labels (RFC 1035 §2.3.4 bounds a name's label count),
+    the separator [byte_val 0x2Euy] is well-formed, and its encoding is
+    non-empty. *)
 let domain_wfcv (ls: list domain_label) : bool =
   domain_codec.wfcv ls
 
@@ -247,7 +241,7 @@ let string_of_domain (d: domain_name) : Tot string =
 
     @param s The dotted text string.
     @returns [Some d] on a complete parse, else [None]. *)
-let domain_of_string (s: string) : GTot (option domain_name) =
+let domain_of_string (s: string) : Tot (option domain_name) =
   decode_domain (string_to_ascii_bytes s)
 
 
@@ -255,7 +249,7 @@ let domain_of_string (s: string) : GTot (option domain_name) =
 
     @param s The dotted text string.
     @returns [Some h] on a complete parse, else [None]. *)
-let hostname_of_string (s: string) : GTot (option hostname) =
+let hostname_of_string (s: string) : Tot (option hostname) =
   match domain_of_string s with
   | Some d -> Some ({ name = d })
   | None -> None

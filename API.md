@@ -20,7 +20,6 @@
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `is_label_char` | `U8.t -> bool` | RFC 1035 §3.1 label predicate `[A-Za-z0-9-]` |
-| `is_dot` | `U8.t -> bool` | the `.` separator (`0x2E`) |
 
 ## Codec
 

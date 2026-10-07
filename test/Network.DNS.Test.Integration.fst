@@ -29,8 +29,6 @@ open Network.DNS.Pulse
 
 (** [is_label_char] *)
 let _is_label_char = is_label_char
-(** [is_dot] *)
-let _is_dot = is_dot
 (** [label_codec] *)
 let _label_codec = label_codec
 (** [domain_codec] *)
