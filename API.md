@@ -27,10 +27,12 @@
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `label_codec` | `codec domain_label` | a single label (`satisfy_many1 is_label_char`, 1..63 octets) |
-| `encode_label_list` | `domain_label -> list byte` | a label's raw octets |
-| `encode_labels` | `list domain_label -> list byte` | the dotted form `label ('.' label)*` |
-| `encode_domain` | `domain_name -> list byte` | serialize a name to dotted bytes |
-| `decode_domain` | `list byte -> option domain_name` | parse the dotted form |
+| `domain_codec` | `codec (list domain_label)` | the dotted form `label ('.' label)*` via `sep_by1` |
+| `domain_wfcv` | `list domain_label -> bool` | [domain_codec]'s well-formed guard (alias) |
+| `domain_wfcv_prop` | `list domain_label -> prop` | the propositional side of the guard |
+| `domain_rest_cond` | `list domain_label -> byte_seq -> prop` | the trailing-suffix condition |
+| `encode_domain` | `domain_name -> list byte` | serialize a name to dotted bytes (codec-delegating) |
+| `decode_domain` | `list byte -> option domain_name` | parse the dotted form (codec-delegating; whole input) |
 
 ## String view
 
@@ -63,11 +65,9 @@
 |-------|--------|
 | `lemma_label_length` | a well-formed label is 1..63 octets |
 | `lemma_label_codec_roundtrip` | `label_codec.dec (label_codec.enc dl) == Inr (dl, …)` |
-| `lemma_decode_go_run` | the decoder's accumulator reflexivity over a label run |
-| `lemma_decode_single_label` | `decode_domain lbl.label_bytes == Some { labels = [lbl]; … }` |
-| `lemma_encode_domain_roundtrip` | single-label dotted roundtrip |
-| `lemma_domain_length` | a well-formed label encodes to ≤ 63 octets |
-| `lemma_example_com_concrete` | `example.com` dotted bytes decode to `[example; com]` |
-| `lemma_single_label_concrete` | `www` decodes to a single label |
-| `lemma_root_domain_concrete` | empty dotted input is rejected (`None`) |
+| `lemma_domain_roundtrip` | `domain_codec.dec (enc ls) == Inr (ls, …)` for well-formed `ls` |
+| `lemma_encode_domain_roundtrip` | `decode_domain (encode_domain d) == Some d` (general dotted roundtrip) |
+| `lemma_example_com_concrete` | `example.com` encodes to the exact dotted byte list |
+| `lemma_single_label_concrete` | `www` encodes to exactly `[www]` |
+| `lemma_root_domain_concrete` | the empty label list is rejected (`domain_wfcv [] == false`) |
 | `lemma_label_concrete` | `label_codec` decodes a raw `[www]` run |

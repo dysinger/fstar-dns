@@ -40,10 +40,9 @@ GADT [make_codec]/[encode_spec]/[decode_spec] surface is deleted).  Zero admits.
 - [domain_of_labels] / [root_domain]
 
 @section Lemmas
-- [lemma_decode_go_run] / [lemma_decode_single_label] /
-  [lemma_encode_domain_roundtrip] / [lemma_label_codec_roundtrip] /
-  [lemma_label_length] / [lemma_domain_length]
-- concrete byte-vector lemmas
+- [lemma_domain_roundtrip] / [lemma_encode_domain_roundtrip] /
+  [lemma_label_codec_roundtrip] / [lemma_label_length]
+- concrete encode-vector lemmas ([example.com], [www]) + reject lemmas
 *)
 module Network.DNS
 
@@ -150,81 +149,65 @@ let label_codec : codec domain_label =
 
 
 (* ========================================================================
-   Dotted form (list level)
+   Dotted form (codec)
    ======================================================================== *)
 
 
-(** [decode_domain_go] — the dotted-form decoder's structural recursion.
+(** [domain_codec] — the dotted form [label ('.' label)*] as a record [codec
+    (list domain_label)], built from the [sep_by1] separator-fold (Mandate 22:
+    no bespoke scanner).  Encodes labels left-to-right with a [.] (0x2E)
+    BETWEEN them (no trailing dot — the non-FQ text form).
 
-    Walks [bs] with two accumulators: the current label run [cur] (reversed)
-    and the collected labels [acc] (reversed).  The dot closes a label; the end
-    of input closes the last label.  Returns [None] on any malformed input.
+    The [max] is 127 (RFC 1035 §2.3.4 label-count bound), which is the
+    termination fuel for [sep_by1]'s greedy decoder. *)
+let domain_codec : codec (list domain_label) =
+  sep_by1 label_codec (byte_val 0x2Euy) 127
 
-    @param bs  The remaining input bytes.
-    @param cur The current label run (reversed).
-    @param acc The collected labels (reversed).
-    @returns [Some d] on a complete parse, [None] on malformed input. *)
-let rec decode_domain_go (bs: list byte) (cur: list byte) (acc: list domain_label)
-  : option domain_name
-  =
-  match bs with
-  | [] ->
-    (if Cons? cur then
-       let lbl = { label_bytes = List.Tot.rev cur } in
-       if List.Tot.length cur <= 63 then Some ({ labels = List.Tot.rev (lbl :: acc); fully_qualified = false }) else None
-     else
-       (match acc with
-        | [] -> None
-        | _ -> Some ({ labels = List.Tot.rev acc; fully_qualified = false })))
-  | b :: rest ->
-    if is_label_char b then
-      decode_domain_go rest (b :: cur) acc
-    else if is_dot b then
-      (if Cons? cur then
-         let lbl = { label_bytes = List.Tot.rev cur } in
-         if List.Tot.length cur <= 63 then decode_domain_go rest [] (lbl :: acc) else None
-       else None)
-    else None
+
+(** [domain_wfcv] — a non-empty label list is well-formed for [domain_codec]:
+    definitionally [domain_codec.wfcv ls] (each label is a [label_wfcv] label
+    and there are at most 127 labels — RFC 1035 §2.3.4 bounds a name's label
+    count). *)
+let domain_wfcv (ls: list domain_label) : bool =
+  domain_codec.wfcv ls
+
+
+(** [domain_wfcv_prop] — the propositional side of [domain_codec.wfcv]. *)
+let domain_wfcv_prop (ls: list domain_label) : prop =
+  domain_codec.wfcv_prop ls
+
+
+(** [domain_rest_cond] — the trailing-suffix condition of [domain_codec]. *)
+let domain_rest_cond (ls: list domain_label) (r: byte_seq) : prop =
+  domain_codec.rest_cond ls r
+
+
+(** [encode_domain] — serialize a [domain_name] to the dotted form via
+    [domain_codec.enc] (crossing the [byte_seq]→[list byte] boundary).
+
+    @param d The name to serialize.
+    @returns The dotted byte list of [d.labels]. *)
+let encode_domain (d: domain_name) : Tot (list byte) =
+  Seq.seq_to_list (domain_codec.enc d.labels)
 
 
 (** [decode_domain] — parse the dotted form [label ('.' label)*] into a
-    [domain_name]; [None] unless the whole input is consumed.
+    [domain_name] via [domain_codec.dec] (crossing the [list byte]→[byte_seq]
+    boundary).  [None] unless the WHOLE input is consumed (the decoder
+    consumed [n] == [Seq.length] input).  The dotted text form carries no
+    [fully_qualified] flag, so the result is always [fully_qualified = false]
+    (the trailing-dot FQ form is out of scope for the pure dotted codec — see
+    the 8.2 decision).
 
     @param bs The dotted byte list.
     @returns [Some d] when [bs] is exactly the dotted form, else [None]. *)
 let decode_domain (bs: list byte) : option domain_name =
-  decode_domain_go bs [] []
-
-
-(** [encode_label_list] — serialize a single label to its raw octet list.
-
-    @param dl The label to serialize.
-    @returns [dl.label_bytes]. *)
-let encode_label_list (dl: domain_label) : list byte = dl.label_bytes
-
-
-(** [encode_labels] — serialize a label list to the dotted form
-    [label ('.' label)*] (dots BETWEEN labels, no trailing dot — matching the
-    RFC 1035 §3.1 text form; the [fully_qualified] flag is not part of the
-    text form's byte encoding, exactly as the original [domain_codec.enc]).
-    Recurses on the list (structural decrease).
-
-    @param ls The labels, in left-to-right order.
-    @returns The dotted byte list. *)
-let rec encode_labels (ls: list domain_label) : list byte =
-  match ls with
-  | [] -> []
-  | [lbl] -> lbl.label_bytes
-  | lbl :: tl ->
-    lbl.label_bytes @ (0x2Euy :: encode_labels tl)
-
-
-(** [encode_domain] — serialize a [domain_name] to the dotted form.
-
-    @param d The name to serialize.
-    @returns The dotted byte list of [d.labels]. *)
-let encode_domain (d: domain_name) : list byte =
-  encode_labels d.labels
+  let s = Seq.seq_of_list bs in
+  match domain_codec.dec s with
+  | Inl _ -> None
+  | Inr (ls, n) ->
+      if n = Seq.length s then Some ({ labels = ls; fully_qualified = false })
+      else None
 
 
 (* ========================================================================
@@ -301,99 +284,64 @@ let root_domain : domain_name = { labels = []; fully_qualified = true }
    ======================================================================== *)
 
 
-(** [lemma_decode_go_run] — [decode_domain_go] consuming a pure label-char run
-    [run] starting from accumulator [cur] accumulates [rev run @ cur]:
-    [decode_domain_go (run @ more) cur [] == decode_domain_go more (rev run @ cur) []].
+(** [lemma_domain_roundtrip] — the dotted-form codec roundtrip: decoding the
+    encoding of a well-formed non-empty label list recovers the list (at the
+    Seq level, via [domain_codec.roundtrip]).
 
-    @param run  A run of label characters.
-    @param more The bytes after the run.
-    @param cur  The starting accumulator.
-    Requires [run] to be all label characters. *)
-#push-options "--z3rlimit 400"
-let rec lemma_decode_go_run (run more cur: list byte) : Lemma
-  (requires List.Tot.for_all is_label_char run)
-  (ensures decode_domain_go (run @ more) cur [] == decode_domain_go more (List.Tot.rev run @ cur) [])
-  (decreases run)
-  = match run with
-    | [] -> ()
-    | b :: rest ->
-      lemma_decode_go_run rest more (b :: cur);
-      FStar.List.Tot.Properties.rev_rev' (b :: rest);
-      FStar.List.Tot.Properties.rev_rev' rest;
-      FStar.List.Tot.Properties.append_assoc (List.Tot.rev rest) [b] cur;
-      FStar.List.Tot.Properties.append_l_cons b cur (List.Tot.rev rest);
-      ()
-#pop-options
+    @param ls The labels (require [domain_wfcv ls] / [domain_wfcv_prop ls] /
+             [domain_rest_cond ls Seq.empty]).
+    Ensures [domain_codec.dec (domain_codec.enc ls ++ empty) == Inr (ls, |enc ls|)]. *)
+let lemma_domain_roundtrip (ls: list domain_label) : Lemma
+  (requires domain_wfcv ls /\ domain_wfcv_prop ls /\ domain_rest_cond ls Seq.empty)
+  (ensures domain_codec.dec (domain_codec.enc ls `Seq.append` Seq.empty)
+           == Inr (ls, Seq.length (domain_codec.enc ls)))
+  = domain_codec.roundtrip ls Seq.empty
 
 
-(** [lemma_decode_single_label] — decoding a single well-formed label's bytes
-    alone ([encode_domain { labels = [lbl]; fully_qualified = false }] ==
-    lbl.label_bytes]) recovers the label.
+(** [lemma_encode_domain_roundtrip] — roundtrip of the dotted form through the
+    [encode_domain]/[decode_domain] wrappers: decoding the encoding of a
+    well-formed non-empty label name recovers the name ([fully_qualified = false]).
 
-    @param lbl The label (require [label_wfcv lbl]).
-    Ensures [decode_domain lbl.label_bytes == Some { labels = [lbl]; fully_qualified = false }]. *)
-#push-options "--z3rlimit 400"
-let lemma_decode_single_label (lbl: domain_label) : Lemma
-  (requires label_wfcv lbl)
-  (ensures decode_domain lbl.label_bytes == Some ({ labels = [lbl]; fully_qualified = false }))
-  =
-  lemma_decode_go_run lbl.label_bytes [] [];
-  FStar.List.Tot.Properties.rev_involutive lbl.label_bytes;
-  FStar.List.Tot.Properties.rev_length lbl.label_bytes;
-  FStar.List.Tot.Properties.append_l_nil (List.Tot.rev lbl.label_bytes);
-  ()
-#pop-options
-
-
-(** [lemma_domain_length] — the dotted encoding of a well-formed single label
-    is at most 63 octets.
-
-    @param dl The label (require [label_wfcv dl]).
-    Ensures [List.Tot.length (encode_label_list dl) <= 63]. *)
-let lemma_domain_length (dl: domain_label) : Lemma
-  (requires label_wfcv dl)
-  (ensures List.Tot.length (encode_label_list dl) <= 63)
-  = ()
-
-
-(** [lemma_encode_domain_roundtrip] — roundtrip of the dotted form for a
-    single label: [decode_domain (encode_domain d) == Some d].
-
-    @param d The name (require [fully_qualified = false] and a single
-             well-formed label).
+    @param d The name (require [fully_qualified = false] and a well-formed
+             non-empty label list).
     Ensures [decode_domain (encode_domain d) == Some d]. *)
-#push-options "--z3rlimit 400"
 let lemma_encode_domain_roundtrip (d: domain_name) : Lemma
   (requires d.fully_qualified = false /\
-            (match d.labels with
-             | [lbl] -> label_wfcv lbl
-             | _ -> False))
+            domain_wfcv d.labels /\ domain_wfcv_prop d.labels /\
+            domain_rest_cond d.labels Seq.empty)
   (ensures decode_domain (encode_domain d) == Some d)
-  = match d.labels with
-    | [lbl] ->
-      lemma_decode_single_label lbl;
-      ()
-    | _ -> ()
-#pop-options
+  =
+  lemma_domain_roundtrip d.labels;
+  Seq.append_empty_r (domain_codec.enc d.labels);
+  lemma_seq_list_bij (domain_codec.enc d.labels);
+  lemma_seq_of_list_length (Seq.seq_to_list (domain_codec.enc d.labels));
+  assert (domain_codec.dec (Seq.seq_of_list (Seq.seq_to_list (domain_codec.enc d.labels)))
+          == Inr (d.labels, Seq.length (domain_codec.enc d.labels)));
+  assert (Seq.seq_of_list (Seq.seq_to_list (domain_codec.enc d.labels)))
+          == domain_codec.enc d.labels;
+  ()
 
 
-(** [lemma_example_com_concrete] — [decode_domain] of the dotted bytes for
-    [example.com] recovers exactly [example] and [com]. *)
+
+(** [lemma_example_com_concrete] — encoding the two-label name
+    [example.com] produces the exact dotted byte list (RGB §85 Wall 2: the
+    concrete ENCODE is proven via [Seq.lemma_eq_intro], not a [decode]
+    reduction through [sep_by1]). *)
 let lemma_example_com_concrete () : Lemma
-  (ensures decode_domain
-             [0x65uy; 0x78uy; 0x61uy; 0x6Duy; 0x70uy; 0x6Cuy; 0x65uy; (* example *)
-              0x2Euy;                                                        (* . *)
-              0x63uy; 0x6Fuy; 0x6Duy]                                        (* com *)
-           == Some ({ labels = [ { label_bytes = [0x65uy; 0x78uy; 0x61uy; 0x6Duy; 0x70uy; 0x6Cuy; 0x65uy] };
-                                 { label_bytes = [0x63uy; 0x6Fuy; 0x6Duy] } ];
-                      fully_qualified = false }))
-  = assert_norm (decode_domain
-             [0x65uy; 0x78uy; 0x61uy; 0x6Duy; 0x70uy; 0x6Cuy; 0x65uy;
-              0x2Euy;
-              0x63uy; 0x6Fuy; 0x6Duy]
-           == Some ({ labels = [ { label_bytes = [0x65uy; 0x78uy; 0x61uy; 0x6Duy; 0x70uy; 0x6Cuy; 0x65uy] };
-                                 { label_bytes = [0x63uy; 0x6Fuy; 0x6Duy] } ];
-                      fully_qualified = false }))
+  (ensures
+    encode_domain ({ labels = [ { label_bytes = [0x65uy; 0x78uy; 0x61uy; 0x6Duy; 0x70uy; 0x6Cuy; 0x65uy] };
+                                { label_bytes = [0x63uy; 0x6Fuy; 0x6Duy] } ];
+                     fully_qualified = false })
+    == [0x65uy; 0x78uy; 0x61uy; 0x6Duy; 0x70uy; 0x6Cuy; 0x65uy;
+        0x2Euy;
+        0x63uy; 0x6Fuy; 0x6Duy])
+  = Seq.lemma_eq_intro
+      (domain_codec.enc [ { label_bytes = [0x65uy; 0x78uy; 0x61uy; 0x6Duy; 0x70uy; 0x6Cuy; 0x65uy] };
+                           { label_bytes = [0x63uy; 0x6Fuy; 0x6Duy] } ])
+      (seq_of_list [0x65uy; 0x78uy; 0x61uy; 0x6Duy; 0x70uy; 0x6Cuy; 0x65uy;
+                    0x2Euy;
+                    0x63uy; 0x6Fuy; 0x6Duy]);
+    ()
 
 
 (** [lemma_label_codec_roundtrip] — the single-label codec roundtrip: decoding
@@ -428,18 +376,23 @@ let lemma_label_length (dl: domain_label) : Lemma
   = ()
 
 
-(** [lemma_root_domain_concrete] — [decode_domain] of the empty input is the
-    unqualified empty name ([None]) — the root is a [0x00] wire byte, not an
-    empty dotted text. *)
+(** [lemma_root_domain_concrete] — the well-formedness guard rejects the empty
+    label list ([domain_wfcv [] == false]): the root is a [0x00] wire byte,
+    not an empty dotted text (which [sep_by1]'s non-empty [wfcv] excludes). *)
 let lemma_root_domain_concrete () : Lemma
-  (ensures decode_domain [] == None)
+  (ensures domain_wfcv [] == false)
   = ()
 
 
-(** [lemma_single_label_concrete] — [decode_domain] of a single label
-    ([www]) recovers the label. *)
+(** [lemma_single_label_concrete] — encoding a single [www] label produces
+    exactly its three byte octets (concrete ENCODE via [Seq.lemma_eq_intro],
+    mirroring MIME's concrete-encode pattern — §85 Wall 2). *)
 let lemma_single_label_concrete () : Lemma
-  (ensures decode_domain [0x77uy; 0x77uy; 0x77uy]
-           == Some ({ labels = [ { label_bytes = [0x77uy; 0x77uy; 0x77uy] } ];
-                      fully_qualified = false }))
-  = ()
+  (ensures
+    encode_domain ({ labels = [ { label_bytes = [0x77uy; 0x77uy; 0x77uy] } ];
+                     fully_qualified = false })
+    == [0x77uy; 0x77uy; 0x77uy])
+  = Seq.lemma_eq_intro
+      (domain_codec.enc [ { label_bytes = [0x77uy; 0x77uy; 0x77uy] } ])
+      (seq_of_list [0x77uy; 0x77uy; 0x77uy]);
+    ()

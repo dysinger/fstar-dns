@@ -33,14 +33,12 @@ let _is_label_char = is_label_char
 let _is_dot = is_dot
 (** [label_codec] *)
 let _label_codec = label_codec
-(** [encode_label_list] *)
-let _encode_label_list = encode_label_list
-(** [encode_labels] *)
-let _encode_labels = encode_labels
+(** [domain_codec] *)
+let _domain_codec = domain_codec
+(** [domain_wfcv] *)
+let _domain_wfcv = domain_wfcv
 (** [encode_domain] *)
 let _encode_domain = encode_domain
-(** [decode_domain_go] *)
-let _decode_domain_go = decode_domain_go
 (** [decode_domain] *)
 let _decode_domain = decode_domain
 (** [ascii_bytes_to_string] *)
@@ -68,14 +66,10 @@ let _label_wfcv = label_wfcv
 let _lemma_label_length = lemma_label_length
 (** [lemma_label_codec_roundtrip] *)
 let _lemma_label_codec_roundtrip = lemma_label_codec_roundtrip
-(** [lemma_decode_go_run] *)
-let _lemma_decode_go_run = lemma_decode_go_run
-(** [lemma_decode_single_label] *)
-let _lemma_decode_single_label = lemma_decode_single_label
+(** [lemma_domain_roundtrip] *)
+let _lemma_domain_roundtrip = lemma_domain_roundtrip
 (** [lemma_encode_domain_roundtrip] *)
 let _lemma_encode_domain_roundtrip = lemma_encode_domain_roundtrip
-(** [lemma_domain_length] *)
-let _lemma_domain_length = lemma_domain_length
 (** [lemma_example_com_concrete] *)
 let _lemma_example_com_concrete = lemma_example_com_concrete
 (** [lemma_single_label_concrete] *)

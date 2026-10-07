@@ -16,11 +16,12 @@
     };
     # The codec dependency (Data.Codec.Types).  Consumed from the published
     # `dysinger/fstar-codec` GitHub repo, pinned to the commit that ships the
-    # variable-width `satisfy_many0`/`satisfy_many1` predicate-run combinators
-    # AND the `take_until` delimiter-bounded `codec (list byte)` (the Mandate 22
-    # root-cause fix; DNS's label run needs `satisfy_many1`, its dotted form and
-    # any delimiter-terminated content need `take_until`).
-    fstar-codec.url = "github:dysinger/fstar-codec/17ce56442de119614103086e9706690e6bd03e41";
+    # variable-width `satisfy_many0`/`satisfy_many1` predicate-run combinators,
+    # the `take_until` delimiter-bounded `codec (list byte)`, AND the `sep_by1`
+    # separator-interleave combinator (the Mandate 22 root-cause fix; DNS's
+    # dotted form `label ('.' label)*` is `sep_by1 label_codec (byte_val
+    # 0x2Euy) 127`).
+    fstar-codec.url = "github:dysinger/fstar-codec/39f3b53";
   };
 
   outputs =
