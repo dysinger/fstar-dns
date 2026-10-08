@@ -59,6 +59,32 @@ let _root_domain = root_domain
 let _label_wfcv = label_wfcv
 (** [string_is_ascii] *)
 let _string_is_ascii = string_is_ascii
+(** [is_letter] *)
+let _is_letter = is_letter
+(** [is_let_dig] *)
+let _is_let_dig = is_let_dig
+(** [is_ldh] *)
+let _is_ldh = is_ldh
+(** [hostname_label_bytes_wfcv] *)
+let _hostname_label_bytes_wfcv = hostname_label_bytes_wfcv
+(** [hostname_wfcv] *)
+let _hostname_wfcv = hostname_wfcv
+(** [hostname_label_codec] *)
+let _hostname_label_codec = hostname_label_codec
+(** [hostname_codec] *)
+let _hostname_codec = hostname_codec
+(** [hostname_codec_wfcv] *)
+let _hostname_codec_wfcv = hostname_codec_wfcv
+(** [hostname_codec_wfcv_prop] *)
+let _hostname_codec_wfcv_prop = hostname_codec_wfcv_prop
+(** [hostname_codec_rest_cond] *)
+let _hostname_codec_rest_cond = hostname_codec_rest_cond
+(** [encode_hostname] *)
+let _encode_hostname = encode_hostname
+(** [decode_hostname] *)
+let _decode_hostname = decode_hostname
+(** [string_of_hostname] *)
+let _string_of_hostname = string_of_hostname
 
 
 (** Lemmas *)
@@ -86,6 +112,12 @@ let _lemma_label_wfcv_eq_codec_wfcv = lemma_label_wfcv_eq_codec_wfcv
 let _lemma_decode_domain_reject_empty = lemma_decode_domain_reject_empty
 (** [lemma_decode_domain_whole_input] *)
 let _lemma_decode_domain_whole_input = lemma_decode_domain_whole_input
+(** [lemma_encode_hostname_roundtrip] *)
+let _lemma_encode_hostname_roundtrip = lemma_encode_hostname_roundtrip
+(** [lemma_hostname_www_concrete] *)
+let _lemma_hostname_www_concrete = lemma_hostname_www_concrete
+(** [lemma_hostname_label_reject_hyphen] *)
+let _lemma_hostname_label_reject_hyphen = lemma_hostname_label_reject_hyphen
 
 
 (** Pulse leaf fn's — mechanically protected against deletion *)

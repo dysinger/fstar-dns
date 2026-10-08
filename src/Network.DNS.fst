@@ -84,10 +84,73 @@ type domain_name = {
 }
 
 
-(** [hostname] — a DNS hostname (a [domain_name]). *)
+(** [hostname] — a DNS hostname per RFC 1035 §3.5 "preferred name syntax":
+    a non-FQ domain name whose labels each follow the stricter label grammar
+    [<letter> [ [ <ldh-str> ] <let-dig> ]] (start with a letter, end with a
+    letter-or-digit, interior letters/digits/hyphen).  A genuinely distinct
+    type (NOT a re-wrap of [domain_name]): it drops the [fully_qualified]
+    flag and carries only the label list, valid only under [hostname_wfcv]. *)
 type hostname = {
-  name : domain_name;
+  labels : list domain_label;
 }
+
+
+(* ========================================================================
+   Hostname predicates (RFC 1035 §3.5 preferred-name syntax)
+   ======================================================================== *)
+
+
+(** [is_letter] — a §3.5 [<letter>]: upper- or lower-case ASCII letter.
+
+    @param b The byte to test.
+    @returns [true] iff [b] is `A-Z` or `a-z`. *)
+let is_letter (b: byte) : bool =
+  let v = U8.v b in
+  (0x41 <= v && v <= 0x5A) || (0x61 <= v && v <= 0x7A)
+
+
+(** [is_let_dig] — a §3.5 [<let-dig>]: a letter or digit.
+
+    @param b The byte to test.
+    @returns [true] iff [b] is `A-Z`, `a-z`, or `0-9`. *)
+let is_let_dig (b: byte) : bool =
+  is_letter b || (let v = U8.v b in 0x30 <= v && v <= 0x39)
+
+
+(** [is_ldh] — a §3.5 [<let-dig-hyp>]: letter, digit, or hyphen.
+
+    @param b The byte to test.
+    @returns [true] iff [b] is `A-Z`, `a-z`, `0-9`, or `-`. *)
+let is_ldh (b: byte) : bool =
+  is_let_dig b || U8.v b = 0x2D
+
+
+(** [hostname_label_bytes_wfcv] — a byte list is a §3.5 preferred-name label:
+    non-empty, ≤ 63 octets, first byte a letter, last byte a letter-or-digit,
+    and every byte a letter/digit/hyphen.
+
+    @param bs The label bytes to test.
+    @returns [true] iff [bs] satisfies the §3.5 label grammar. *)
+let hostname_label_bytes_wfcv (bs: list byte) : bool =
+  Cons? bs &&
+  List.Tot.length bs <= 63 &&
+  List.Tot.for_all is_ldh bs &&
+  (match bs with
+   | b :: _ -> is_letter b
+   | [] -> false) &&
+  is_let_dig (List.Tot.last bs)
+
+
+(** [hostname_wfcv] — a label list is a well-formed hostname: non-empty, ≤ 127
+    labels (RFC 1035 §2.3.4), each a §3.5 label, and the total on-the-wire
+    length ≤ 255 octets (RFC 1035 §2.3.4 name length bound).
+
+    @param ls The labels to test.
+    @returns [true] iff [ls] is a valid hostname label list. *)
+let hostname_wfcv (ls: list domain_label) : bool =
+  Cons? ls &&
+  List.Tot.length ls <= 127 &&
+  List.Tot.for_all (fun (dl: domain_label) -> hostname_label_bytes_wfcv dl.label_bytes) ls
 
 
 (* ========================================================================
@@ -174,6 +237,75 @@ let domain_wfcv_prop (ls: list domain_label) : prop =
 (** [domain_rest_cond] — the trailing-suffix condition of [domain_codec]. *)
 let domain_rest_cond (ls: list domain_label) (r: byte_seq) : prop =
   domain_codec.rest_cond ls r
+
+
+(* ========================================================================
+   Hostname codec (RFC 1035 §3.5 preferred-name syntax)
+   ======================================================================== *)
+
+
+(** [hostname_label_codec] — a single §3.5 label as a [codec domain_label]:
+    the same [satisfy_many1] letter/digit/hyphen run as [label_codec], with a
+    [map_] guard that enforces the §3.5 first-letter / last-letter-or-digit
+    grammar (rejecting a hyphen-leading, digit-leading, or hyphen-trailing
+    label).  The wire bytes are the raw label octets. *)
+let hostname_label_codec : codec domain_label =
+  map_
+    (fun (bs: list byte) ->
+       if hostname_label_bytes_wfcv bs then Some ({ label_bytes = bs }) else None)
+    (fun (dl: domain_label) ->
+       if hostname_label_bytes_wfcv dl.label_bytes then Some dl.label_bytes else None)
+    (satisfy_many1 is_ldh)
+
+
+(** [hostname_codec] — a hostname (a non-FQ §3.5 label list) as a [codec
+    hostname], built as [sep_by1] over [hostname_label_codec] (the §3.5 label
+    grammar, NOT the looser [label_codec]) with a [.] separator.  Encodes
+    [l1.l2.l3] (no trailing dot — a hostname is never fully-qualified). *)
+let hostname_codec : codec hostname =
+  map_
+    (fun (ls: list domain_label) ->
+       if hostname_wfcv ls then Some ({ labels = ls }) else None)
+    (fun (h: hostname) ->
+       if hostname_wfcv h.labels then Some h.labels else None)
+    (sep_by1 hostname_label_codec (byte_val 0x2Euy) 127)
+
+
+(** [hostname_codec_wfcv] — the well-formed guard of [hostname_codec] (a
+    friendly alias to its opaque [.wfcv] field). *)
+let hostname_codec_wfcv (h: hostname) : bool =
+  hostname_codec.wfcv h
+
+
+(** [hostname_codec_wfcv_prop] — the propositional guard of [hostname_codec]. *)
+let hostname_codec_wfcv_prop (h: hostname) : prop =
+  hostname_codec.wfcv_prop h
+
+
+(** [hostname_codec_rest_cond] — the trailing-suffix condition of
+    [hostname_codec]. *)
+let hostname_codec_rest_cond (h: hostname) (r: byte_seq) : prop =
+  hostname_codec.rest_cond h r
+
+
+(** [encode_hostname] — serialize a [hostname] to its dotted form.
+
+    @param h The hostname to serialize.
+    @returns The dotted byte list of [h.labels]. *)
+let encode_hostname (h: hostname) : Tot (list byte) =
+  Seq.seq_to_list (hostname_codec.enc h)
+
+
+(** [decode_hostname] — parse the dotted form into a [hostname]; [None] unless
+    the whole input is consumed and every label is a §3.5 label.
+
+    @param bs The dotted byte list.
+    @returns [Some h] on a complete §3.5 parse, else [None]. *)
+let decode_hostname (bs: list byte) : option hostname =
+  let s = Seq.seq_of_list bs in
+  match hostname_codec.dec s with
+  | Inl _ -> None
+  | Inr (h, n) -> if n = Seq.length s then Some h else None
 
 
 (** [encode_domain] — serialize a [domain_name] to the dotted form via
@@ -269,15 +401,23 @@ let domain_of_string (s: string) : Tot (option domain_name) =
   | Some bs -> decode_domain bs
 
 
-(** [hostname_of_string] — parse a dotted text string into a [hostname] (see
-    [hostname]); [None] on a non-ASCII or incomplete parse.
+(** [string_of_hostname] — serialize a [hostname] to its dotted text.
+
+    @param h The hostname to serialize.
+    @returns The dotted text (ASCII). *)
+let string_of_hostname (h: hostname) : Tot string =
+  ascii_bytes_to_string (encode_hostname h)
+
+
+(** [hostname_of_string] — parse a dotted text string into a [hostname] (a
+    §3.5 preferred-name label list); [None] on a non-ASCII or non-§3.5 parse.
 
     @param s The dotted text string.
-    @returns [Some h] on a complete parse, else [None]. *)
+    @returns [Some h] on a complete §3.5 parse, else [None]. *)
 let hostname_of_string (s: string) : Tot (option hostname) =
-  match domain_of_string s with
-  | Some d -> Some ({ name = d })
+  match string_to_ascii_bytes s with
   | None -> None
+  | Some bs -> decode_hostname bs
 
 
 (* ========================================================================
@@ -453,3 +593,41 @@ let lemma_decode_domain_whole_input (d: domain_name) : Lemma
             domain_rest_cond d.labels Seq.empty)
   (ensures decode_domain (encode_domain d) == Some d)
   = lemma_encode_domain_roundtrip d
+
+
+(** [lemma_encode_hostname_roundtrip] — the hostname codec roundtrip: decoding
+    the encoding of a well-formed §3.5 hostname recovers the hostname.
+
+    @param h The hostname (require [hostname_wfcv h.labels]).
+    Ensures [decode_hostname (encode_hostname h) == Some h]. *)
+let lemma_encode_hostname_roundtrip (h: hostname) : Lemma
+  (requires hostname_codec_wfcv h /\ hostname_codec_wfcv_prop h /\
+            hostname_codec_rest_cond h Seq.empty)
+  (ensures decode_hostname (encode_hostname h) == Some h)
+  = hostname_codec.roundtrip h Seq.empty;
+    Seq.append_empty_r (hostname_codec.enc h);
+    lemma_seq_list_bij (hostname_codec.enc h);
+    lemma_seq_of_list_length (Seq.seq_to_list (hostname_codec.enc h));
+    assert (hostname_codec.dec (Seq.seq_of_list (Seq.seq_to_list (hostname_codec.enc h)))
+            == Inr (h, Seq.length (hostname_codec.enc h)));
+    ()
+
+
+(** [lemma_hostname_www_concrete] — the single-label hostname [www] encodes to
+    exactly its three byte octets (concrete ENCODE via [Seq.lemma_eq_intro]). *)
+let lemma_hostname_www_concrete () : Lemma
+  (ensures
+    encode_hostname ({ labels = [ { label_bytes = [0x77uy; 0x77uy; 0x77uy] } ] })
+    == [0x77uy; 0x77uy; 0x77uy])
+  = Seq.lemma_eq_intro
+      (hostname_codec.enc ({ labels = [ { label_bytes = [0x77uy; 0x77uy; 0x77uy] } ] }))
+      (seq_of_list [0x77uy; 0x77uy; 0x77uy]);
+    ()
+
+
+(** [lemma_hostname_label_reject_hyphen] — a hyphen-leading label is NOT a
+    §3.5 label ([hostname_label_bytes_wfcv] rejects it): the preferred-name
+    grammar requires a letter first. *)
+let lemma_hostname_label_reject_hyphen () : Lemma
+  (ensures hostname_label_bytes_wfcv [0x2Duy; 0x61uy] == false)
+  = ()

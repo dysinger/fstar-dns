@@ -7,7 +7,7 @@
 |------|------|-------------|
 | `domain_label` | record | a single label — `label_bytes : list byte` |
 | `domain_name` | record | `labels : list domain_label` + `fully_qualified : bool` |
-| `hostname` | record | a `domain_name` (`name : domain_name`) |
+| `hostname` | record | a §3.5 preferred name — `labels : list domain_label` (no `fully_qualified`) |
 
 ### Network.DNS.Pulse — Extractable Leaf
 | Name | Kind | Description |
@@ -20,6 +20,11 @@
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `is_label_char` | `U8.t -> bool` | RFC 1035 §3.1 label predicate `[A-Za-z0-9-]` |
+| `is_letter` | `U8.t -> bool` | §3.5 `<letter>` (`A-Z`/`a-z`) |
+| `is_let_dig` | `U8.t -> bool` | §3.5 `<let-dig>` (letter or digit) |
+| `is_ldh` | `U8.t -> bool` | §3.5 `<let-dig-hyp>` (letter/digit/hyphen) |
+| `hostname_label_bytes_wfcv` | `list byte -> bool` | §3.5 label grammar (first letter, last let-dig) |
+| `hostname_wfcv` | `list domain_label -> bool` | a well-formed §3.5 hostname label list |
 
 ## Codec
 
@@ -32,6 +37,9 @@
 | `domain_rest_cond` | `list domain_label -> byte_seq -> prop` | the trailing-suffix condition |
 | `encode_domain` | `domain_name -> list byte` | serialize a name to dotted bytes (codec-delegating) |
 | `decode_domain` | `list byte -> option domain_name` | parse the dotted form (codec-delegating; whole input) |
+| `hostname_codec` | `codec hostname` | the §3.5 preferred-name dotted form via `sep_by1` |
+| `encode_hostname` | `hostname -> list byte` | serialize a hostname to dotted bytes |
+| `decode_hostname` | `list byte -> option hostname` | parse the dotted form (whole input) |
 
 ## String view
 
@@ -39,7 +47,8 @@
 |----------|-----------|-------------|
 | `string_of_domain` | `domain_name -> string` | serialize to dotted text |
 | `domain_of_string` | `string -> option domain_name` | parse a dotted text string (rejects non-ASCII) |
-| `hostname_of_string` | `string -> option hostname` | parse a hostname string |
+| `string_of_hostname` | `hostname -> string` | serialize a hostname to dotted text |
+| `hostname_of_string` | `string -> option hostname` | parse a §3.5 hostname string |
 | `string_is_ascii` | `string -> bool` | `true` iff every code point is `< 128` |
 | `ascii_bytes_to_string` | `list byte -> string` | ASCII byte list to string |
 | `string_to_ascii_bytes` | `string -> option (list byte)` | string to bytes (`None` on non-ASCII) |
@@ -75,3 +84,6 @@
 | `lemma_label_wfcv_eq_codec_wfcv` | `label_wfcv dl == label_codec.wfcv dl` |
 | `lemma_decode_domain_reject_empty` | `decode_domain [] == None` |
 | `lemma_decode_domain_whole_input` | `decode_domain (encode_domain d) == Some d` (whole input) |
+| `lemma_encode_hostname_roundtrip` | `decode_hostname (encode_hostname h) == Some h` (whole input) |
+| `lemma_hostname_www_concrete` | `www` hostname encodes to exactly `[www]` |
+| `lemma_hostname_label_reject_hyphen` | a hyphen-leading label is not a §3.5 label |
