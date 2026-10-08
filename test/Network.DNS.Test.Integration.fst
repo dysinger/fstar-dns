@@ -35,6 +35,16 @@ let _label_codec = label_codec
 let _domain_codec = domain_codec
 (** [domain_wfcv] *)
 let _domain_wfcv = domain_wfcv
+(** [domain_fq_codec] *)
+let _domain_fq_codec = domain_fq_codec
+(** [domain_fq_wfcv] *)
+let _domain_fq_wfcv = domain_fq_wfcv
+(** [domain_fq_wfcv_prop] *)
+let _domain_fq_wfcv_prop = domain_fq_wfcv_prop
+(** [domain_fq_rest_cond] *)
+let _domain_fq_rest_cond = domain_fq_rest_cond
+(** [dot_byte] *)
+let _dot_byte = dot_byte
 (** [encode_domain] *)
 let _encode_domain = encode_domain
 (** [decode_domain] *)
@@ -108,10 +118,14 @@ let _lemma_root_domain_concrete = lemma_root_domain_concrete
 let _lemma_label_concrete = lemma_label_concrete
 (** [lemma_label_wfcv_eq_codec_wfcv] *)
 let _lemma_label_wfcv_eq_codec_wfcv = lemma_label_wfcv_eq_codec_wfcv
-(** [lemma_decode_domain_reject_empty] *)
-let _lemma_decode_domain_reject_empty = lemma_decode_domain_reject_empty
 (** [lemma_decode_domain_whole_input] *)
 let _lemma_decode_domain_whole_input = lemma_decode_domain_whole_input
+(** [lemma_decode_domain_root] *)
+let _lemma_decode_domain_root = lemma_decode_domain_root
+(** [lemma_domain_fq_roundtrip] *)
+let _lemma_domain_fq_roundtrip = lemma_domain_fq_roundtrip
+(** [lemma_fq_concrete] *)
+let _lemma_fq_concrete = lemma_fq_concrete
 (** [lemma_encode_hostname_roundtrip] *)
 let _lemma_encode_hostname_roundtrip = lemma_encode_hostname_roundtrip
 (** [lemma_hostname_www_concrete] *)

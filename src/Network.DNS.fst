@@ -96,6 +96,24 @@ type hostname = {
 
 
 (* ========================================================================
+   Constructors
+   ======================================================================== *)
+
+
+(** [domain_of_labels] — construct a [domain_name] from a label list + flag.
+
+    @param ls The labels.
+    @param fq The fully-qualified flag.
+    @returns The name [ { labels = ls; fully_qualified = fq } ]. *)
+let domain_of_labels (ls: list domain_label) (fq: bool) : domain_name =
+  { labels = ls; fully_qualified = fq }
+
+
+(** [root_domain] — the root domain (empty name, fully-qualified). *)
+let root_domain : domain_name = { labels = []; fully_qualified = true }
+
+
+(* ========================================================================
    Hostname predicates (RFC 1035 §3.5 preferred-name syntax)
    ======================================================================== *)
 
@@ -209,6 +227,10 @@ let label_codec : codec domain_label =
    ======================================================================== *)
 
 
+(** [dot_byte] — the [.] (0x2E) label separator byte. *)
+let dot_byte : byte = 0x2Euy
+
+
 (** [domain_codec] — the dotted form [label ('.' label)*] as a record [codec
     (list domain_label)], built from the [sep_by1] separator-fold (Mandate 22:
     no bespoke scanner).  Encodes labels left-to-right with a [.] (0x2E)
@@ -217,7 +239,15 @@ let label_codec : codec domain_label =
     The [max] is 127 (RFC 1035 §2.3.4 label-count bound), which is the
     termination fuel for [sep_by1]'s greedy decoder. *)
 let domain_codec : codec (list domain_label) =
-  sep_by1 label_codec (byte_val 0x2Euy) 127
+  sep_by1 label_codec (byte_val dot_byte) 127
+
+
+(** [domain_fq_codec] — the fully-qualified dotted form [label ('.' label)* '.']
+    (a trailing dot on every label, including the last) as a record [codec
+    (list domain_label)], built from the [sep_by1_trailing] separator-fold
+    (Mandate 22). *)
+let domain_fq_codec : codec (list domain_label) =
+  sep_by1_trailing label_codec (byte_val dot_byte) 127
 
 
 (** [domain_wfcv] — a non-empty label list is well-formed for [domain_codec]:
@@ -308,32 +338,53 @@ let decode_hostname (bs: list byte) : option hostname =
   | Inr (h, n) -> if n = Seq.length s then Some h else None
 
 
-(** [encode_domain] — serialize a [domain_name] to the dotted form via
-    [domain_codec.enc] (crossing the [byte_seq]→[list byte] boundary).
+(** [encode_domain] — serialize a [domain_name] to its dotted form via the
+    codec layer (crossing the [byte_seq]→[list byte] boundary).
+
+    A non-FQ name ([fully_qualified = false]) encodes as the non-FQ dotted
+    body ([domain_codec], no trailing dot); an FQ name emits the trailing dot
+    ([domain_fq_codec]); the root ([labels = []]) encodes as the empty list.
 
     @param d The name to serialize.
-    @returns The dotted byte list of [d.labels]. *)
+    @returns The dotted byte list. *)
 let encode_domain (d: domain_name) : Tot (list byte) =
-  Seq.seq_to_list (domain_codec.enc d.labels)
+  if d.fully_qualified
+  then Seq.seq_to_list (domain_fq_codec.enc d.labels)
+  else Seq.seq_to_list (domain_codec.enc d.labels)
 
 
-(** [decode_domain] — parse the dotted form [label ('.' label)*] into a
-    [domain_name] via [domain_codec.dec] (crossing the [list byte]→[byte_seq]
-    boundary).  [None] unless the WHOLE input is consumed (the decoder
-    consumed [n] == [Seq.length] input).  The dotted text form carries no
-    [fully_qualified] flag, so the result is always [fully_qualified = false]
-    (the trailing-dot FQ form is out of scope for the pure dotted codec — see
-    the 8.2 decision).
+(** [decode_domain] — parse the dotted form into a [domain_name] via the codec
+    layer (crossing the [list byte]→[byte_seq] boundary).  [None] unless the
+    WHOLE input is consumed.
+
+    The empty input decodes to [Some root_domain].  Otherwise the FQ
+    (trailing-dot) form is tried first ([domain_fq_codec], returning
+    [fully_qualified = true]); if it does not consume the whole input the
+    non-FQ form ([domain_codec], [fully_qualified = false]) is tried.
 
     @param bs The dotted byte list.
-    @returns [Some d] when [bs] is exactly the dotted form, else [None]. *)
+    @returns [Some d] when [bs] is exactly the (non-)FQ dotted form or the
+             root, else [None]. *)
 let decode_domain (bs: list byte) : option domain_name =
-  let s = Seq.seq_of_list bs in
-  match domain_codec.dec s with
-  | Inl _ -> None
-  | Inr (ls, n) ->
-      if n = Seq.length s then Some ({ labels = ls; fully_qualified = false })
-      else None
+  if Cons? bs
+  then
+    let s = Seq.seq_of_list bs in
+    match domain_codec.dec s with
+    | Inr (ls, n) ->
+        if n = Seq.length s then Some ({ labels = ls; fully_qualified = false })
+        else
+          (match domain_fq_codec.dec s with
+           | Inr (ls2, n2) ->
+               if n2 = Seq.length s then Some ({ labels = ls2; fully_qualified = true })
+               else None
+           | Inl _ -> None)
+    | Inl _ ->
+        (match domain_fq_codec.dec s with
+         | Inr (ls, n) ->
+             if n = Seq.length s then Some ({ labels = ls; fully_qualified = true })
+             else None
+         | Inl _ -> None)
+  else Some root_domain
 
 
 (* ========================================================================
@@ -421,24 +472,6 @@ let hostname_of_string (s: string) : Tot (option hostname) =
 
 
 (* ========================================================================
-   Constructors
-   ======================================================================== *)
-
-
-(** [domain_of_labels] — construct a [domain_name] from a label list + flag.
-
-    @param ls The labels.
-    @param fq The fully-qualified flag.
-    @returns The name [ { labels = ls; fully_qualified = fq } ]. *)
-let domain_of_labels (ls: list domain_label) (fq: bool) : domain_name =
-  { labels = ls; fully_qualified = fq }
-
-
-(** [root_domain] — the root domain (empty name, fully-qualified). *)
-let root_domain : domain_name = { labels = []; fully_qualified = true }
-
-
-(* ========================================================================
    Lemmas
    ======================================================================== *)
 
@@ -457,9 +490,29 @@ let lemma_domain_roundtrip (ls: list domain_label) : Lemma
   = domain_codec.roundtrip ls Seq.empty
 
 
-(** [lemma_encode_domain_roundtrip] — roundtrip of the dotted form through the
-    [encode_domain]/[decode_domain] wrappers: decoding the encoding of a
-    well-formed non-empty label name recovers the name ([fully_qualified = false]).
+(** [domain_fq_wfcv] / [domain_fq_wfcv_prop] / [domain_fq_rest_cond] — the
+    friendly aliases to [domain_fq_codec]'s opaque guards. *)
+let domain_fq_wfcv (ls: list domain_label) : bool =
+  domain_fq_codec.wfcv ls
+let domain_fq_wfcv_prop (ls: list domain_label) : prop =
+  domain_fq_codec.wfcv_prop ls
+let domain_fq_rest_cond (ls: list domain_label) (r: byte_seq) : prop =
+  domain_fq_codec.rest_cond ls r
+
+
+(** [lemma_domain_fq_roundtrip] — the FQ codec roundtrip: decoding the encoding
+    of a well-formed non-empty label list (with trailing separator) recovers
+    the list. *)
+let lemma_domain_fq_roundtrip (ls: list domain_label) : Lemma
+  (requires domain_fq_wfcv ls /\ domain_fq_wfcv_prop ls /\ domain_fq_rest_cond ls Seq.empty)
+  (ensures domain_fq_codec.dec (domain_fq_codec.enc ls `Seq.append` Seq.empty)
+           == Inr (ls, Seq.length (domain_fq_codec.enc ls)))
+  = domain_fq_codec.roundtrip ls Seq.empty
+
+
+(** [lemma_encode_domain_roundtrip] — roundtrip of the NON-FQ dotted form
+    through [encode_domain]/[decode_domain]: for a non-FQ, well-formed,
+    non-empty label name, [decode_domain (encode_domain d) == Some d].
 
     @param d The name (require [fully_qualified = false] and a well-formed
              non-empty label list).
@@ -474,11 +527,30 @@ let lemma_encode_domain_roundtrip (d: domain_name) : Lemma
   Seq.append_empty_r (domain_codec.enc d.labels);
   lemma_seq_list_bij (domain_codec.enc d.labels);
   lemma_seq_of_list_length (Seq.seq_to_list (domain_codec.enc d.labels));
-  assert (domain_codec.dec (Seq.seq_of_list (Seq.seq_to_list (domain_codec.enc d.labels)))
-          == Inr (d.labels, Seq.length (domain_codec.enc d.labels)));
-  assert (Seq.seq_of_list (Seq.seq_to_list (domain_codec.enc d.labels)))
-          == domain_codec.enc d.labels;
   ()
+
+
+(** [lemma_fq_concrete] — [www.] (a single-label FQ name) encodes to [www.]
+    (four bytes with a trailing dot) via the FQ codec. *)
+let lemma_fq_concrete () : Lemma
+  (ensures
+    encode_domain ({ labels = [ { label_bytes = [0x77uy; 0x77uy; 0x77uy] } ];
+                     fully_qualified = true })
+    == [0x77uy; 0x77uy; 0x77uy; 0x2Euy])
+  = Seq.lemma_eq_intro
+      (domain_fq_codec.enc [ { label_bytes = [0x77uy; 0x77uy; 0x77uy] } ])
+      (seq_of_list [0x77uy; 0x77uy; 0x77uy; 0x2Euy]);
+    ()
+
+
+
+
+(** [lemma_decode_domain_root] — the root roundtrip: the empty input decodes
+    to [Some root_domain], and [encode_domain root_domain] is the empty list. *)
+let lemma_decode_domain_root () : Lemma
+  (ensures decode_domain [] == Some root_domain /\
+           encode_domain root_domain == [])
+  = ()
 
 
 
@@ -565,16 +637,6 @@ let lemma_single_label_concrete () : Lemma
     Ensures [label_wfcv dl == label_codec.wfcv dl]. *)
 let lemma_label_wfcv_eq_codec_wfcv (dl: domain_label) : Lemma
   (ensures label_wfcv dl == label_codec.wfcv dl)
-  = ()
-
-
-(** [lemma_decode_domain_reject_empty] — decoding the empty byte list yields
-    [None]: the root is not an empty dotted text (the RFC root is a [0x00]
-    wire byte; [sep_by1]'s non-empty [wfcv] excludes the empty list).
-
-    Ensures [decode_domain [] == None]. *)
-let lemma_decode_domain_reject_empty () : Lemma
-  (ensures decode_domain [] == None)
   = ()
 
 

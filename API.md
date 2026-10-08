@@ -32,11 +32,13 @@
 |----------|-----------|-------------|
 | `label_codec` | `codec domain_label` | a single label (`satisfy_many1 is_label_char`, 1..63 octets) |
 | `domain_codec` | `codec (list domain_label)` | the dotted form `label ('.' label)*` via `sep_by1` |
+| `domain_fq_codec` | `codec (list domain_label)` | the FQ form `label ('.' label)* '.'` via `sep_by1_trailing` |
+| `dot_byte` | `byte` | the `0x2E` separator byte |
 | `domain_wfcv` | `list domain_label -> bool` | [domain_codec]'s well-formed guard (alias) |
 | `domain_wfcv_prop` | `list domain_label -> prop` | the propositional side of the guard |
 | `domain_rest_cond` | `list domain_label -> byte_seq -> prop` | the trailing-suffix condition |
 | `encode_domain` | `domain_name -> list byte` | serialize a name to dotted bytes (codec-delegating) |
-| `decode_domain` | `list byte -> option domain_name` | parse the dotted form (codec-delegating; whole input) |
+| `decode_domain` | `list byte -> option domain_name` | parse the (non-)FQ dotted form; `[]` → `Some root_domain` |
 | `hostname_codec` | `codec hostname` | the §3.5 preferred-name dotted form via `sep_by1` |
 | `encode_hostname` | `hostname -> list byte` | serialize a hostname to dotted bytes |
 | `decode_hostname` | `list byte -> option hostname` | parse the dotted form (whole input) |
@@ -76,7 +78,10 @@
 | `lemma_label_length` | a well-formed label is 1..63 octets |
 | `lemma_label_codec_roundtrip` | `label_codec.dec (label_codec.enc dl) == Inr (dl, …)` |
 | `lemma_domain_roundtrip` | `domain_codec.dec (enc ls) == Inr (ls, …)` for well-formed `ls` |
-| `lemma_encode_domain_roundtrip` | `decode_domain (encode_domain d) == Some d` (general dotted roundtrip) |
+| `lemma_encode_domain_roundtrip` | `decode_domain (encode_domain d) == Some d` (non-FQ roundtrip) |
+| `lemma_domain_fq_roundtrip` | the FQ codec roundtrip (codec level) |
+| `lemma_decode_domain_root` | `decode_domain [] == Some root_domain` / `encode_domain root_domain == []` |
+| `lemma_fq_concrete` | `www.` (FQ) encodes to exactly `[www.]` |
 | `lemma_example_com_concrete` | `example.com` encodes to the exact dotted byte list |
 | `lemma_single_label_concrete` | `www` encodes to exactly `[www]` |
 | `lemma_root_domain_concrete` | the empty label list is rejected (`domain_wfcv [] == false`) |
