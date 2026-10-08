@@ -21,7 +21,7 @@
     # separator-interleave combinator (the Mandate 22 root-cause fix; DNS's
     # dotted form `label ('.' label)*` is `sep_by1 label_codec (byte_val
     # 0x2Euy) 127`).
-    fstar-codec.url = "github:dysinger/fstar-codec/f26032c";
+    fstar-codec.url = "github:dysinger/fstar-codec/cea4062";
   };
 
   outputs =

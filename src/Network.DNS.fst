@@ -238,35 +238,27 @@ let dot_byte : byte = 0x2Euy
 
     The [max] is 127 (RFC 1035 §2.3.4 label-count bound), which is the
     termination fuel for [sep_by1]'s greedy decoder. *)
-let domain_codec : codec (list domain_label) =
-  sep_by1 label_codec (byte_val dot_byte) 127
+let domain_codec : codec domain_name =
+  map_
+    (fun (x: list domain_label & bool) -> Some ({ labels = fst x; fully_qualified = snd x }))
+    (fun (d: domain_name) -> Some (d.labels, d.fully_qualified))
+    (sep_by1_opt_trailing label_codec (byte_val dot_byte) 127)
 
 
-(** [domain_fq_codec] — the fully-qualified dotted form [label ('.' label)* '.']
-    (a trailing dot on every label, including the last) as a record [codec
-    (list domain_label)], built from the [sep_by1_trailing] separator-fold
-    (Mandate 22). *)
-let domain_fq_codec : codec (list domain_label) =
-  sep_by1_trailing label_codec (byte_val dot_byte) 127
-
-
-(** [domain_wfcv] — a non-empty label list is well-formed for [domain_codec]:
-    definitionally [domain_codec.wfcv ls] — each label is a [label_wfcv] label,
-    there are at most 127 labels (RFC 1035 §2.3.4 bounds a name's label count),
-    the separator [byte_val 0x2Euy] is well-formed, and its encoding is
-    non-empty. *)
-let domain_wfcv (ls: list domain_label) : bool =
-  domain_codec.wfcv ls
+(** [domain_wfcv] — a [domain_name] is well-formed for [domain_codec]:
+    definitionally [domain_codec.wfcv d]. *)
+let domain_wfcv (d: domain_name) : bool =
+  domain_codec.wfcv d
 
 
 (** [domain_wfcv_prop] — the propositional side of [domain_codec.wfcv]. *)
-let domain_wfcv_prop (ls: list domain_label) : prop =
-  domain_codec.wfcv_prop ls
+let domain_wfcv_prop (d: domain_name) : prop =
+  domain_codec.wfcv_prop d
 
 
 (** [domain_rest_cond] — the trailing-suffix condition of [domain_codec]. *)
-let domain_rest_cond (ls: list domain_label) (r: byte_seq) : prop =
-  domain_codec.rest_cond ls r
+let domain_rest_cond (d: domain_name) (r: byte_seq) : prop =
+  domain_codec.rest_cond d r
 
 
 (* ========================================================================
@@ -338,29 +330,23 @@ let decode_hostname (bs: list byte) : option hostname =
   | Inr (h, n) -> if n = Seq.length s then Some h else None
 
 
-(** [encode_domain] — serialize a [domain_name] to its dotted form via the
-    codec layer (crossing the [byte_seq]→[list byte] boundary).
-
-    A non-FQ name ([fully_qualified = false]) encodes as the non-FQ dotted
-    body ([domain_codec], no trailing dot); an FQ name emits the trailing dot
-    ([domain_fq_codec]); the root ([labels = []]) encodes as the empty list.
+(** [encode_domain] — serialize a [domain_name] to its dotted form via
+    [domain_codec.enc] (crossing the [byte_seq]→[list byte] boundary).  The
+    [fully_qualified] flag drives whether the trailing dot is emitted (the
+    [sep_by1_opt_trailing] optional-trailing form; the root [labels = []]
+    encodes as the empty list).
 
     @param d The name to serialize.
     @returns The dotted byte list. *)
 let encode_domain (d: domain_name) : Tot (list byte) =
-  if d.fully_qualified
-  then Seq.seq_to_list (domain_fq_codec.enc d.labels)
-  else Seq.seq_to_list (domain_codec.enc d.labels)
+  Seq.seq_to_list (domain_codec.enc d)
 
 
-(** [decode_domain] — parse the dotted form into a [domain_name] via the codec
-    layer (crossing the [list byte]→[byte_seq] boundary).  [None] unless the
-    WHOLE input is consumed.
-
-    The empty input decodes to [Some root_domain].  Otherwise the FQ
-    (trailing-dot) form is tried first ([domain_fq_codec], returning
-    [fully_qualified = true]); if it does not consume the whole input the
-    non-FQ form ([domain_codec], [fully_qualified = false]) is tried.
+(** [decode_domain] — parse the dotted form into a [domain_name] via
+    [domain_codec.dec] (crossing the [list byte]→[byte_seq] boundary).  [None]
+    unless the WHOLE input is consumed.  The empty input decodes to
+    [Some root_domain] (the root is not representable by [sep_by1_opt_trailing]
+    whose [wfcv] requires [Cons?]).
 
     @param bs The dotted byte list.
     @returns [Some d] when [bs] is exactly the (non-)FQ dotted form or the
@@ -369,21 +355,9 @@ let decode_domain (bs: list byte) : option domain_name =
   if Cons? bs
   then
     let s = Seq.seq_of_list bs in
-    match domain_codec.dec s with
-    | Inr (ls, n) ->
-        if n = Seq.length s then Some ({ labels = ls; fully_qualified = false })
-        else
-          (match domain_fq_codec.dec s with
-           | Inr (ls2, n2) ->
-               if n2 = Seq.length s then Some ({ labels = ls2; fully_qualified = true })
-               else None
-           | Inl _ -> None)
-    | Inl _ ->
-        (match domain_fq_codec.dec s with
-         | Inr (ls, n) ->
-             if n = Seq.length s then Some ({ labels = ls; fully_qualified = true })
-             else None
-         | Inl _ -> None)
+    (match domain_codec.dec s with
+     | Inr (d, n) -> if n = Seq.length s then Some d else None
+     | Inl _ -> None)
   else Some root_domain
 
 
@@ -477,68 +451,49 @@ let hostname_of_string (s: string) : Tot (option hostname) =
 
 
 (** [lemma_domain_roundtrip] — the dotted-form codec roundtrip: decoding the
-    encoding of a well-formed non-empty label list recovers the list (at the
-    Seq level, via [domain_codec.roundtrip]).
+    encoding of a well-formed [domain_name] recovers the name, for BOTH the
+    non-FQ and FQ forms (the [sep_by1_opt_trailing] single codec carries the
+    trailing flag in the value).
 
-    @param ls The labels (require [domain_wfcv ls] / [domain_wfcv_prop ls] /
-             [domain_rest_cond ls Seq.empty]).
-    Ensures [domain_codec.dec (domain_codec.enc ls ++ empty) == Inr (ls, |enc ls|)]. *)
-let lemma_domain_roundtrip (ls: list domain_label) : Lemma
-  (requires domain_wfcv ls /\ domain_wfcv_prop ls /\ domain_rest_cond ls Seq.empty)
-  (ensures domain_codec.dec (domain_codec.enc ls `Seq.append` Seq.empty)
-           == Inr (ls, Seq.length (domain_codec.enc ls)))
-  = domain_codec.roundtrip ls Seq.empty
-
-
-(** [domain_fq_wfcv] / [domain_fq_wfcv_prop] / [domain_fq_rest_cond] — the
-    friendly aliases to [domain_fq_codec]'s opaque guards. *)
-let domain_fq_wfcv (ls: list domain_label) : bool =
-  domain_fq_codec.wfcv ls
-let domain_fq_wfcv_prop (ls: list domain_label) : prop =
-  domain_fq_codec.wfcv_prop ls
-let domain_fq_rest_cond (ls: list domain_label) (r: byte_seq) : prop =
-  domain_fq_codec.rest_cond ls r
+    @param d The name (require [domain_wfcv d] / [domain_wfcv_prop d] /
+             [domain_rest_cond d Seq.empty]).
+    Ensures [domain_codec.dec (domain_codec.enc d ++ empty) == Inr (d, |enc d|)]. *)
+let lemma_domain_roundtrip (d: domain_name) : Lemma
+  (requires domain_wfcv d /\ domain_wfcv_prop d /\ domain_rest_cond d Seq.empty)
+  (ensures domain_codec.dec (domain_codec.enc d `Seq.append` Seq.empty)
+           == Inr (d, Seq.length (domain_codec.enc d)))
+  = domain_codec.roundtrip d Seq.empty
 
 
-(** [lemma_domain_fq_roundtrip] — the FQ codec roundtrip: decoding the encoding
-    of a well-formed non-empty label list (with trailing separator) recovers
-    the list. *)
-let lemma_domain_fq_roundtrip (ls: list domain_label) : Lemma
-  (requires domain_fq_wfcv ls /\ domain_fq_wfcv_prop ls /\ domain_fq_rest_cond ls Seq.empty)
-  (ensures domain_fq_codec.dec (domain_fq_codec.enc ls `Seq.append` Seq.empty)
-           == Inr (ls, Seq.length (domain_fq_codec.enc ls)))
-  = domain_fq_codec.roundtrip ls Seq.empty
+(** [lemma_encode_domain_roundtrip] — roundtrip of the dotted form through
+    [encode_domain]/[decode_domain]: for a well-formed, non-empty label name
+    (FQ or non-FQ), [decode_domain (encode_domain d) == Some d].
 
-
-(** [lemma_encode_domain_roundtrip] — roundtrip of the NON-FQ dotted form
-    through [encode_domain]/[decode_domain]: for a non-FQ, well-formed,
-    non-empty label name, [decode_domain (encode_domain d) == Some d].
-
-    @param d The name (require [fully_qualified = false] and a well-formed
-             non-empty label list).
+    @param d The name (require a well-formed non-empty label list).
     Ensures [decode_domain (encode_domain d) == Some d]. *)
 let lemma_encode_domain_roundtrip (d: domain_name) : Lemma
-  (requires d.fully_qualified = false /\
-            domain_wfcv d.labels /\ domain_wfcv_prop d.labels /\
-            domain_rest_cond d.labels Seq.empty)
+  (requires domain_wfcv d /\ domain_wfcv_prop d /\ domain_rest_cond d Seq.empty)
   (ensures decode_domain (encode_domain d) == Some d)
   =
-  lemma_domain_roundtrip d.labels;
-  Seq.append_empty_r (domain_codec.enc d.labels);
-  lemma_seq_list_bij (domain_codec.enc d.labels);
-  lemma_seq_of_list_length (Seq.seq_to_list (domain_codec.enc d.labels));
+  lemma_domain_roundtrip d;
+  Seq.append_empty_r (domain_codec.enc d);
+  lemma_seq_list_bij (domain_codec.enc d);
+  lemma_seq_of_list_length (Seq.seq_to_list (domain_codec.enc d));
+  assert (domain_codec.dec (Seq.seq_of_list (Seq.seq_to_list (domain_codec.enc d)))
+          == Inr (d, Seq.length (domain_codec.enc d)));
   ()
 
 
 (** [lemma_fq_concrete] — [www.] (a single-label FQ name) encodes to [www.]
-    (four bytes with a trailing dot) via the FQ codec. *)
+    (four bytes with a trailing dot). *)
 let lemma_fq_concrete () : Lemma
   (ensures
     encode_domain ({ labels = [ { label_bytes = [0x77uy; 0x77uy; 0x77uy] } ];
                      fully_qualified = true })
     == [0x77uy; 0x77uy; 0x77uy; 0x2Euy])
   = Seq.lemma_eq_intro
-      (domain_fq_codec.enc [ { label_bytes = [0x77uy; 0x77uy; 0x77uy] } ])
+      (domain_codec.enc ({ labels = [ { label_bytes = [0x77uy; 0x77uy; 0x77uy] } ];
+                           fully_qualified = true }))
       (seq_of_list [0x77uy; 0x77uy; 0x77uy; 0x2Euy]);
     ()
 
@@ -567,8 +522,9 @@ let lemma_example_com_concrete () : Lemma
         0x2Euy;
         0x63uy; 0x6Fuy; 0x6Duy])
   = Seq.lemma_eq_intro
-      (domain_codec.enc [ { label_bytes = [0x65uy; 0x78uy; 0x61uy; 0x6Duy; 0x70uy; 0x6Cuy; 0x65uy] };
-                           { label_bytes = [0x63uy; 0x6Fuy; 0x6Duy] } ])
+      (domain_codec.enc ({ labels = [ { label_bytes = [0x65uy; 0x78uy; 0x61uy; 0x6Duy; 0x70uy; 0x6Cuy; 0x65uy] };
+                                       { label_bytes = [0x63uy; 0x6Fuy; 0x6Duy] } ];
+                           fully_qualified = false }))
       (seq_of_list [0x65uy; 0x78uy; 0x61uy; 0x6Duy; 0x70uy; 0x6Cuy; 0x65uy;
                     0x2Euy;
                     0x63uy; 0x6Fuy; 0x6Duy]);
@@ -608,10 +564,11 @@ let lemma_label_length (dl: domain_label) : Lemma
 
 
 (** [lemma_root_domain_concrete] — the well-formedness guard rejects the empty
-    label list ([domain_wfcv [] == false]): the root is a [0x00] wire byte,
-    not an empty dotted text (which [sep_by1]'s non-empty [wfcv] excludes). *)
+    label list ([domain_wfcv root_domain == false]): the root is a [0x00] wire
+    byte, not an empty dotted text (which [sep_by1_opt_trailing]'s non-empty
+    [wfcv] excludes). *)
 let lemma_root_domain_concrete () : Lemma
-  (ensures domain_wfcv [] == false)
+  (ensures domain_wfcv root_domain == false)
   = ()
 
 
@@ -624,7 +581,8 @@ let lemma_single_label_concrete () : Lemma
                      fully_qualified = false })
     == [0x77uy; 0x77uy; 0x77uy])
   = Seq.lemma_eq_intro
-      (domain_codec.enc [ { label_bytes = [0x77uy; 0x77uy; 0x77uy] } ])
+      (domain_codec.enc ({ labels = [ { label_bytes = [0x77uy; 0x77uy; 0x77uy] } ];
+                           fully_qualified = false }))
       (seq_of_list [0x77uy; 0x77uy; 0x77uy]);
     ()
 
@@ -650,9 +608,7 @@ let lemma_label_wfcv_eq_codec_wfcv (dl: domain_label) : Lemma
              non-empty labels).
     Ensures [decode_domain (encode_domain d) == Some d]. *)
 let lemma_decode_domain_whole_input (d: domain_name) : Lemma
-  (requires d.fully_qualified = false /\
-            domain_wfcv d.labels /\ domain_wfcv_prop d.labels /\
-            domain_rest_cond d.labels Seq.empty)
+  (requires domain_wfcv d /\ domain_wfcv_prop d /\ domain_rest_cond d Seq.empty)
   (ensures decode_domain (encode_domain d) == Some d)
   = lemma_encode_domain_roundtrip d
 

@@ -61,16 +61,16 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1791456224,
-        "narHash": "sha256-nSMVeSxFMp/MlKrEyhvzZMCwYGW5+Mh3msPU9g6L0zQ=",
+        "lastModified": 1791468704,
+        "narHash": "sha256-8ULuYE3d3JLJxBNvq4vWGdgxIksUZoEuqcAZFdLMQR8=",
         "owner": "dysinger",
         "repo": "fstar-codec",
-        "rev": "f26032c87c4db804cba536b679f819f020dd2fe5",
+        "rev": "cea40628867439f43d478027f987dea7895d6cfb",
         "type": "github"
       },
       "original": {
         "owner": "dysinger",
-        "ref": "f26032c",
+        "ref": "cea4062",
         "repo": "fstar-codec",
         "type": "github"
       }

@@ -31,8 +31,7 @@
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `label_codec` | `codec domain_label` | a single label (`satisfy_many1 is_label_char`, 1..63 octets) |
-| `domain_codec` | `codec (list domain_label)` | the dotted form `label ('.' label)*` via `sep_by1` |
-| `domain_fq_codec` | `codec (list domain_label)` | the FQ form `label ('.' label)* '.'` via `sep_by1_trailing` |
+| `domain_codec` | `codec domain_name` | the dotted form `label ('.' label)* ('.')?` via `sep_by1_opt_trailing` (carries `fully_qualified`) |
 | `dot_byte` | `byte` | the `0x2E` separator byte |
 | `domain_wfcv` | `list domain_label -> bool` | [domain_codec]'s well-formed guard (alias) |
 | `domain_wfcv_prop` | `list domain_label -> prop` | the propositional side of the guard |
@@ -78,8 +77,7 @@
 | `lemma_label_length` | a well-formed label is 1..63 octets |
 | `lemma_label_codec_roundtrip` | `label_codec.dec (label_codec.enc dl) == Inr (dl, …)` |
 | `lemma_domain_roundtrip` | `domain_codec.dec (enc ls) == Inr (ls, …)` for well-formed `ls` |
-| `lemma_encode_domain_roundtrip` | `decode_domain (encode_domain d) == Some d` (non-FQ roundtrip) |
-| `lemma_domain_fq_roundtrip` | the FQ codec roundtrip (codec level) |
+| `lemma_encode_domain_roundtrip` | `decode_domain (encode_domain d) == Some d` (FQ and non-FQ) |
 | `lemma_decode_domain_root` | `decode_domain [] == Some root_domain` / `encode_domain root_domain == []` |
 | `lemma_fq_concrete` | `www.` (FQ) encodes to exactly `[www.]` |
 | `lemma_example_com_concrete` | `example.com` encodes to the exact dotted byte list |
