@@ -43,6 +43,8 @@ let _decode_domain = decode_domain
 let _ascii_bytes_to_string = ascii_bytes_to_string
 (** [string_to_ascii_bytes] *)
 let _string_to_ascii_bytes = string_to_ascii_bytes
+(** [string_to_ascii_bytes_go] *)
+let _string_to_ascii_bytes_go = string_to_ascii_bytes_go
 (** [string_of_domain] *)
 let _string_of_domain = string_of_domain
 (** [domain_of_string] *)
@@ -55,6 +57,8 @@ let _domain_of_labels = domain_of_labels
 let _root_domain = root_domain
 (** [label_wfcv] *)
 let _label_wfcv = label_wfcv
+(** [string_is_ascii] *)
+let _string_is_ascii = string_is_ascii
 
 
 (** Lemmas *)
@@ -76,6 +80,12 @@ let _lemma_single_label_concrete = lemma_single_label_concrete
 let _lemma_root_domain_concrete = lemma_root_domain_concrete
 (** [lemma_label_concrete] *)
 let _lemma_label_concrete = lemma_label_concrete
+(** [lemma_label_wfcv_eq_codec_wfcv] *)
+let _lemma_label_wfcv_eq_codec_wfcv = lemma_label_wfcv_eq_codec_wfcv
+(** [lemma_decode_domain_reject_empty] *)
+let _lemma_decode_domain_reject_empty = lemma_decode_domain_reject_empty
+(** [lemma_decode_domain_whole_input] *)
+let _lemma_decode_domain_whole_input = lemma_decode_domain_whole_input
 
 
 (** Pulse leaf fn's — mechanically protected against deletion *)

@@ -218,13 +218,34 @@ let ascii_bytes_to_string (bs: list byte) : string =
     (List.Tot.map (fun (b: byte) -> FStar.Char.char_of_int (U8.v b)) bs)
 
 
-(** [string_to_ascii_bytes] — [string] to [list byte], truncating code points
-    via `% 256`.  Only valid for ASCII strings.
+(** [string_to_ascii_bytes] — [string] to [list byte], returning [None] for any
+    non-ASCII code point ([>= 128]).  A non-ASCII [domain_of_string] input is
+    REJECTED rather than silently truncated into a bogus ASCII label.
 
     @param s The [string] to convert.
-    @returns The byte list (ASCII only). *)
-let string_to_ascii_bytes (s: string) : list byte =
-  List.Tot.map (fun (c: FStar.Char.char) -> U8.uint_to_t (FStar.Char.int_of_char c % 256))
+    @returns [Some bs] when [s] is pure ASCII, else [None]. *)
+let rec string_to_ascii_bytes_go (cs: list FStar.Char.char) : option (list byte) =
+  match cs with
+  | [] -> Some []
+  | c :: tl ->
+      let v = FStar.Char.int_of_char c in
+      if v < 128
+      then (match string_to_ascii_bytes_go tl with
+            | None -> None
+            | Some rest -> Some (U8.uint_to_t v :: rest))
+      else None
+
+let string_to_ascii_bytes (s: string) : option (list byte) =
+  string_to_ascii_bytes_go (FStar.String.list_of_string s)
+
+
+(** [string_is_ascii] — [true] iff every code point in [s] is < 128 (the guard
+    folded into [string_to_ascii_bytes], exposed for lemma use).
+
+    @param s The [string] to test.
+    @returns [true] iff [s] is pure ASCII. *)
+let string_is_ascii (s: string) : bool =
+  List.Tot.for_all (fun (c: FStar.Char.char) -> FStar.Char.int_of_char c < 128)
     (FStar.String.list_of_string s)
 
 
@@ -237,15 +258,19 @@ let string_of_domain (d: domain_name) : Tot string =
 
 
 (** [domain_of_string] — parse a dotted text string into a [domain_name];
-    [None] unless the whole string is consumed by [decode_domain].
+    [None] unless the string is pure ASCII AND the whole string is consumed by
+    [decode_domain].
 
     @param s The dotted text string.
     @returns [Some d] on a complete parse, else [None]. *)
 let domain_of_string (s: string) : Tot (option domain_name) =
-  decode_domain (string_to_ascii_bytes s)
+  match string_to_ascii_bytes s with
+  | None -> None
+  | Some bs -> decode_domain bs
 
 
-(** [hostname_of_string] — parse a dotted text string into a [hostname].
+(** [hostname_of_string] — parse a dotted text string into a [hostname] (see
+    [hostname]); [None] on a non-ASCII or incomplete parse.
 
     @param s The dotted text string.
     @returns [Some h] on a complete parse, else [None]. *)
@@ -390,3 +415,41 @@ let lemma_single_label_concrete () : Lemma
       (domain_codec.enc [ { label_bytes = [0x77uy; 0x77uy; 0x77uy] } ])
       (seq_of_list [0x77uy; 0x77uy; 0x77uy]);
     ()
+
+
+(** [lemma_label_wfcv_eq_codec_wfcv] — the local [label_wfcv] predicate is
+    definitionally the [label_codec.wfcv] guard: a well-formed label (non-empty
+    ≤ 63-octet label-char run) is exactly what [label_codec] accepts.
+
+    @param dl The label.
+    Ensures [label_wfcv dl == label_codec.wfcv dl]. *)
+let lemma_label_wfcv_eq_codec_wfcv (dl: domain_label) : Lemma
+  (ensures label_wfcv dl == label_codec.wfcv dl)
+  = ()
+
+
+(** [lemma_decode_domain_reject_empty] — decoding the empty byte list yields
+    [None]: the root is not an empty dotted text (the RFC root is a [0x00]
+    wire byte; [sep_by1]'s non-empty [wfcv] excludes the empty list).
+
+    Ensures [decode_domain [] == None]. *)
+let lemma_decode_domain_reject_empty () : Lemma
+  (ensures decode_domain [] == None)
+  = ()
+
+
+(** [lemma_decode_domain_whole_input] — decoding a well-formed label list's
+    encoding consumes the whole input and yields [fq = false] (a non-FQ name):
+    [decode_domain (encode_domain d) == Some d] under the same well-formedness
+    conditions as [lemma_encode_domain_roundtrip], stated at the empty-suffix /
+    whole-input level.
+
+    @param d The name (require [fully_qualified = false] and well-formed
+             non-empty labels).
+    Ensures [decode_domain (encode_domain d) == Some d]. *)
+let lemma_decode_domain_whole_input (d: domain_name) : Lemma
+  (requires d.fully_qualified = false /\
+            domain_wfcv d.labels /\ domain_wfcv_prop d.labels /\
+            domain_rest_cond d.labels Seq.empty)
+  (ensures decode_domain (encode_domain d) == Some d)
+  = lemma_encode_domain_roundtrip d

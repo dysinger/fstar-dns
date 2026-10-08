@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(no unreleased changes)
+### Changed
+
+- Re-expressed the dotted domain form over the new `sep_by1` codec combinator
+  (`domain_codec = sep_by1 label_codec (byte_val 0x2Euy) 127`); deleted the
+  bespoke dotted-form scanners (`decode_domain_go`, `encode_labels`,
+  `encode_label_list`) in favor of the verified separator-fold (Mandate 22).
+  `encode_domain`/`decode_domain` are now thin codec-delegating wrappers, and
+  the dotted roundtrip is proven 0-admit via the generic `sep_by1.roundtrip`.
+
+### Fixed
+
+- `label_codec`'s encode-side backward map now guards the RFC 1035 §3.1
+  `<= 63` octet bound (`if label_wfcv dl then Some dl.label_bytes else None`),
+  so `enc`/`dec`/`wfcv` agree (an over-long label is rejected, not emitted).
+- Dropped the ghost (`GTot`) effect on the string views (`string_of_domain`,
+  `domain_of_string`, `hostname_of_string`) — they are `Tot` and extraction-
+  available.
+- Deleted dead `is_dot` (its `byte_val 0x2Euy` form is inlined in
+  `domain_codec`).
 
 ## [0.1.0] — initial extraction
 

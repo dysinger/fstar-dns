@@ -38,9 +38,11 @@
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `string_of_domain` | `domain_name -> string` | serialize to dotted text |
-| `domain_of_string` | `string -> option domain_name` | parse a dotted text string |
+| `domain_of_string` | `string -> option domain_name` | parse a dotted text string (rejects non-ASCII) |
 | `hostname_of_string` | `string -> option hostname` | parse a hostname string |
-| `ascii_bytes_to_string` / `string_to_ascii_bytes` | `list byte -> string` / `string -> list byte` | local ASCII bridges |
+| `string_is_ascii` | `string -> bool` | `true` iff every code point is `< 128` |
+| `ascii_bytes_to_string` | `list byte -> string` | ASCII byte list to string |
+| `string_to_ascii_bytes` | `string -> option (list byte)` | string to bytes (`None` on non-ASCII) |
 
 ## Constructors
 
@@ -70,3 +72,6 @@
 | `lemma_single_label_concrete` | `www` encodes to exactly `[www]` |
 | `lemma_root_domain_concrete` | the empty label list is rejected (`domain_wfcv [] == false`) |
 | `lemma_label_concrete` | `label_codec` decodes a raw `[www]` run |
+| `lemma_label_wfcv_eq_codec_wfcv` | `label_wfcv dl == label_codec.wfcv dl` |
+| `lemma_decode_domain_reject_empty` | `decode_domain [] == None` |
+| `lemma_decode_domain_whole_input` | `decode_domain (encode_domain d) == Some d` (whole input) |
