@@ -12,8 +12,7 @@
 ### Network.DNS.Pulse — Extractable Leaf
 | Name | Kind | Description |
 |------|------|-------------|
-| `label3` | record | a fixed 3-byte label content (`b0`/`b1`/`b2`) |
-| `opt_label3` | sum | `OEL_None` / `OEL_Some of (label3 & U32.t)` |
+| `opt_label` | sum | `ODL_None` / `ODL_Some of U32.t` (the decoded label octet length) |
 
 ## Predicates
 
@@ -33,9 +32,9 @@
 | `label_codec` | `codec domain_label` | a single label (`satisfy_many1 is_label_char`, 1..63 octets) |
 | `domain_codec` | `codec domain_name` | the dotted form `label ('.' label)* ('.')?` via `sep_by1_opt_trailing` (carries `fully_qualified`) |
 | `dot_byte` | `byte` | the `0x2E` separator byte |
-| `domain_wfcv` | `list domain_label -> bool` | [domain_codec]'s well-formed guard (alias) |
-| `domain_wfcv_prop` | `list domain_label -> prop` | the propositional side of the guard |
-| `domain_rest_cond` | `list domain_label -> byte_seq -> prop` | the trailing-suffix condition |
+| `domain_wfcv` | `domain_name -> bool` | [domain_codec]'s well-formed guard (alias) |
+| `domain_wfcv_prop` | `domain_name -> prop` | the propositional side of the guard |
+| `domain_rest_cond` | `domain_name -> byte_seq -> prop` | the trailing-suffix condition |
 | `encode_domain` | `domain_name -> list byte` | serialize a name to dotted bytes (codec-delegating) |
 | `decode_domain` | `list byte -> option domain_name` | parse the (non-)FQ dotted form; `[]` → `Some root_domain` |
 | `hostname_codec` | `codec hostname` | the §3.5 preferred-name dotted form via `sep_by1` |
@@ -65,10 +64,10 @@
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `encode_label` | `fn (label3) (A.array U8.t) (U32.t) -> U32.t` | write `[len][b0][b1][b2][0x00]`, returns `5ul` |
-| `decode_label` | `fn (A.array U8.t) (U32.t) -> opt_label3` | read the length byte + up to 3 content octets |
-| `lemma_pulse_label_roundtrip` | Pulse `fn` | encode then decode preserves the label |
-| `label3_to_seq` / `label3_of_indices` / `label_len_byte` | `noextract` pure | label ↔ byte bridges + the `0x03` length byte |
+| `encode_label` | `fn (A.array U8.t) (U32.t) (A.array U8.t) (U32.t) -> U32.t` | write the RFC wire form `[len][b0..b_{len-1}][0x00]`, returns `len + 2` |
+| `decode_label` | `fn (A.array U8.t) (U32.t) -> opt_label` | read the length byte + up to 63 content octets, returns the octet length |
+| `lemma_pulse_label_roundtrip` | Pulse `fn` | encode then decode recovers the label length |
+| `root_byte` / `u32_max` | constant | the `0x00` terminator / the `2^32` overflow bound |
 
 ## Lemmas
 
@@ -85,7 +84,7 @@
 | `lemma_root_domain_concrete` | the empty label list is rejected (`domain_wfcv [] == false`) |
 | `lemma_label_concrete` | `label_codec` decodes a raw `[www]` run |
 | `lemma_label_wfcv_eq_codec_wfcv` | `label_wfcv dl == label_codec.wfcv dl` |
-| `lemma_decode_domain_reject_empty` | `decode_domain [] == None` |
+| `lemma_decode_domain_root` | `decode_domain [] == Some root_domain` (the empty input is the root) |
 | `lemma_decode_domain_whole_input` | `decode_domain (encode_domain d) == Some d` (whole input) |
 | `lemma_encode_hostname_roundtrip` | `decode_hostname (encode_hostname h) == Some h` (whole input) |
 | `lemma_hostname_www_concrete` | `www` hostname encodes to exactly `[www]` |

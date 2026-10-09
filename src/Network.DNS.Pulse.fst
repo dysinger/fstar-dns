@@ -5,33 +5,28 @@
 Network.DNS.Pulse — C-extractable DNS label wire-format encode/decode via
 Pulse + Custard.
 
-A single DNS label in the RFC 1035 §3.1 wire form: a length byte followed by
-the label octets, with a `0x00` root terminator ending the name.  The *content*
-octets are carried as a fixed 3-byte record ([label3]) — a bounded slice of the
-general 1..63-octet label — so the encode/decode is fixed-width and the
-post-conditions are POINTWISE (each `Seq.index` conjunct discharged
-independently), matching the `Data.UUID.Pulse`/`Data.BaseN.Pulse` shape.
+A single DNS label in the RFC 1035 §3.1 wire form: a length byte (1..63)
+followed by the label octets, with a `0x00` root terminator ending the name.
+The content octets are carried in a caller-provided [Pulse.Lib.Array] of
+[U8.t]; the length byte names how many of them form the label.
 
-The length byte is the label length in octets (`0x03` for a full [label3]); the
-roundtrip [lemma_pulse_label_roundtrip] proves encode-then-decode preserves the
-label and that the `0x00` terminator follows.
+The wire form is `[len][b0..b_{len-1}][0x00]` — a *variable-length* label
+(1..63 octets), NOT the earlier fixed 3-byte `label3` slice.  The copy is a
+Pulse [while] loop whose invariant carries the `pts_to` frames plus a
+`len`-progress measure, matching [Pulse.Lib.Array.memcpy_l] (offset-indexed).
 
 Written for F* v2026.09.20 (Custard `--custard_backend C`).  Zero admits.
 
 @header Network.DNS.Pulse
 
 @section Type
-- [label3] — a fixed 3-byte label content
-- [opt_label3] — the tagged decode result ([OEL_None] | [OEL_Some] of ([label3] & [U32.t]))
-
-@section Spec
-- [label3_of_indices] / [label3_to_seq] — pure label ↔ byte-list bridges
+- [opt_label] — the tagged decode result ([ODL_None] | [ODL_Some] of [U32.t])
 
 @section Encode
-- [encode_label] — writes `[len][b0][b1][b2][0x00]`, returns the byte count
+- [encode_label] — writes `[len][b0..][0x00]`, returns the byte count
 
 @section Decode
-- [decode_label] — reads the length byte + up to 3 content octets
+- [decode_label] — reads the length byte + content + terminator
 
 @section Roundtrip
 - [lemma_pulse_label_roundtrip] — encode then decode preserves the label
@@ -51,170 +46,212 @@ open FStar.Seq
 open FStar.Int.Cast
 
 
-(* ── Type ───────────────────────────────────────────────────────────── *)
+(* ========================================================================
+   Type
+   ======================================================================== *)
 
 
-(** [label3] — a fixed 3-byte label content (a bounded slice of a DNS label's
-    octets; the general 1..63-octet label is the same structure with more
-    [b_N] fields). *)
-type label3 = {
-  b0 : U8.t;
-  b1 : U8.t;
-  b2 : U8.t;
-}
+(** [opt_label] — the decode result: [ODL_None] (a length byte outside 1..63)
+    or [ODL_Some] of the label octet length ([U32.t]).
+
+    The content octets themselves stay in the caller's buffer (the decode
+    reads them in place, it does not copy them out); only the length crosses
+    the C ABI.  [ODL_None] is constructively reachable (a wire length byte 0
+    or over 63 is rejected). *)
+type opt_label =
+  | ODL_None
+  | ODL_Some of U32.t
 
 
-(** [opt_label3] — the decode result: [OEL_None] (length byte > 3) or
-    [OEL_Some] of ([label3] & [U32.t]).
-
-    [OEL_None] is constructively reachable (a wire length byte over 3 is
-    rejected); the sum wraps the pair for Custard's F# backend (which has no
-    bare-tuple2 realization — see Network.MIME.Pulse). *)
-type opt_label3 =
-  | OEL_None
-  | OEL_Some of (label3 & U32.t)
+(* ========================================================================
+   Named constants
+   ======================================================================== *)
 
 
-(* ── Pure spec (noextract) ──────────────────────────────────────────── *)
+(** [root_byte] — the [0x00] root-label terminator that ends a name on the
+    wire (RFC 1035 §3.1). *)
+let root_byte : U8.t = 0x00uy
 
 
-(** [label3_of_indices] — reconstruct a [label3] from a sequence's 3 indices
-    (the offset refinement makes each [Seq.index] well-typed).
+(** [u32_max] — [2^32], the U32 overflow bound ([U32.v i + k < u32_max]). *)
+let u32_max : nat = 4294967296
 
-    @param s   The source sequence.
-    @param off The start index (require [off + 2 < Seq.length s]).
-    @returns The label [ { b0 = s[off]; b1 = s[off+1]; b2 = s[off+2] } ]. *)
+
+(** [lemma_cast_roundtrip] — [uint32_to_uint8] then [uint8_to_uint32] is the
+    identity for values under 256 (the width is lossless below [2^8]). *)
 noextract
-let label3_of_indices (s: Seq.seq U8.t) (off: nat { off + 2 < Seq.length s }) : label3 =
-  { b0 = Seq.index s off;
-    b1 = Seq.index s (off + 1);
-    b2 = Seq.index s (off + 2);
-  }
+let lemma_cast_roundtrip (x: U32.t) : Lemma
+  (requires U32.v x < 256)
+  (ensures uint8_to_uint32 (uint32_to_uint8 x) == x)
+  [SMTPat (uint8_to_uint32 (uint32_to_uint8 x))]
+  = ()
 
 
-(** [label3_to_seq] — the pure map from a [label3] to its 3 content octets.
-
-    @param l The label.
-    @returns [seq_of_list [l.b0; l.b1; l.b2]]. *)
-noextract
-let label3_to_seq (l: label3) : Seq.seq U8.t =
-  Seq.seq_of_list [l.b0; l.b1; l.b2]
+(* ========================================================================
+   Encode
+   ======================================================================== *)
 
 
-(** [label_len_byte] — the wire length byte for a [label3] (always [0x03]). *)
-noextract
-let label_len_byte : U8.t = 0x03uy
+(** [encode_label] — write the wire form of a label into [dst] at [off].
 
+    [src] holds the 1..63 content octets at indices [0 .. len); [len] names
+    how many (a byte, so [U32.v len <= 63]).  The wire form is:
 
-(* ── Encode ─────────────────────────────────────────────────────────── *)
+        [dst[off] = len][dst[off+1 .. off+len] = src[0 .. len)][dst[off+len+1] = 0x00]
 
+    i.e. [len + 2] bytes total (length byte, content, root terminator).
 
-(** [encode_label] — write the wire form `[len][b0][b1][b2][0x00]` of [l] into
-    [buf] at [off].
+    The writes are a [while] loop over the content range; only the bytes in
+    [off .. off+len+2) change — every other byte of [dst] is preserved (see
+    the [ensures]).
 
-    @param l The label content to write.
-    @param buf The destination buffer (must hold at least 5 bytes at [off]).
+    @param src The source content octets (length [>= U32.v len]).
+    @param len The label octet count (1..63).
+    @param dst The destination buffer (holds [len+2] bytes at [off]).
     @param off The write offset.
-    @returns The number of bytes written (always [5ul]). *)
-fn encode_label (l: label3) (buf: A.array U8.t) (off: U32.t)
-    (#s0: erased (Seq.seq U8.t))
+    @returns The number of bytes written ([len + 2]). *)
+fn encode_label (src: A.array U8.t) (len: U32.t) (dst: A.array U8.t) (off: U32.t)
+    (#src0: erased (Seq.seq U8.t))
+    (#dst0: erased (Seq.seq U8.t))
     requires
-      A.pts_to buf s0 **
-      pure (U32.v off + 5 <= A.length buf /\ U32.v off + 4 < 4294967296)
+      A.pts_to src src0 **
+      A.pts_to dst dst0 **
+      pure (1 <= U32.v len /\ U32.v len <= 63 /\
+            U32.v len <= A.length src /\
+            U32.v off + U32.v len + 2 <= A.length dst /\
+            U32.v off + U32.v len + 1 < u32_max /\
+            U32.v len + 2 < u32_max)
     returns w: U32.t
     ensures
+      A.pts_to src src0 **
       (exists* (s1: Seq.seq U8.t).
-        A.pts_to buf s1 **
-        pure (U32.v off + 5 <= A.length buf /\
-              Seq.length s1 == A.length buf /\
-              Seq.index s1 (U32.v off) == label_len_byte /\
-              Seq.index s1 (U32.v off + 1) == l.b0 /\
-              Seq.index s1 (U32.v off + 2) == l.b1 /\
-              Seq.index s1 (U32.v off + 3) == l.b2 /\
-              Seq.index s1 (U32.v off + 4) == 0x00uy)) **
-      pure (w == 5ul)
+        A.pts_to dst s1 **
+        pure (1 <= U32.v len /\ U32.v len <= 63 /\
+              U32.v len <= A.length src /\
+              Seq.length src0 == A.length src /\
+              U32.v off + U32.v len + 2 <= A.length dst /\
+              Seq.length s1 == A.length dst /\
+              U32.v len + 2 < u32_max /\
+              Seq.index s1 (U32.v off) == uint32_to_uint8 len /\
+              (forall (j: nat). j < U32.v len ==>
+                 Seq.index s1 (U32.v off + 1 + j) == Seq.index src0 j) /\
+              Seq.index s1 (U32.v off + 1 + U32.v len) == root_byte)) **
+      pure (w == U32.add_mod len 2ul)
 {
-  let j0 = US.uint32_to_sizet off;
-  let j1 = US.uint32_to_sizet (U32.add off 1ul);
-  let j2 = US.uint32_to_sizet (U32.add off 2ul);
-  let j3 = US.uint32_to_sizet (U32.add off 3ul);
-  let j4 = US.uint32_to_sizet (U32.add off 4ul);
-  A.pts_to_len buf;
-  buf.(j0) <- label_len_byte;
-  buf.(j1) <- l.b0;
-  buf.(j2) <- l.b1;
-  buf.(j3) <- l.b2;
-  buf.(j4) <- 0x00uy;
-  5ul
+  A.pts_to_len src;
+  A.pts_to_len dst;
+  let joff = US.uint32_to_sizet off;
+  (* Length byte. *)
+  dst.(joff) <- uint32_to_uint8 len;
+  (* Content octets: copy src[0..len) into dst[off+1 .. off+1+len). *)
+  let mut i : US.t = 0sz;
+  while (US.lt !i (US.uint32_to_sizet len))
+    invariant exists* (vi: US.t) (s: Seq.seq U8.t).
+      pts_to i vi **
+      A.pts_to src src0 **
+      A.pts_to dst s **
+      pure (
+        US.v vi <= U32.v len /\
+        1 <= U32.v len /\ U32.v len <= 63 /\
+        U32.v len <= A.length src /\
+        Seq.length src0 == A.length src /\
+        U32.v off + U32.v len + 2 <= A.length dst /\
+        Seq.length s == A.length dst /\
+        Seq.index s (U32.v off) == uint32_to_uint8 len /\
+        (forall (j: nat). j < US.v vi ==>
+           Seq.index s (U32.v off + 1 + j) == Seq.index src0 j))
+    decreases (U32.v len - US.v !i)
+  {
+    let vi = !i;
+    let jdst = US.add (US.add joff 1sz) vi;
+    dst.(jdst) <- src.(vi);
+    i := US.add vi 1sz;
+  };
+  (* Root terminator. *)
+  let jterm = US.add (US.add joff 1sz) (US.uint32_to_sizet len);
+  dst.(jterm) <- root_byte;
+  U32.add_mod len 2ul
 }
 
 
-(* ── Decode ─────────────────────────────────────────────────────────── *)
+(* ========================================================================
+   Decode
+   ======================================================================== *)
 
 
 (** [decode_label] — read the wire form at [off]: the length byte [len], then
-    up to 3 content octets.
+    [len] content octets, then the terminator.
 
-    @param buf The source buffer (must hold at least 5 bytes at [off]).
+    A length byte 0 or over 63 is rejected (0 is the root terminator, over 63
+    is an out-of-range or compression-pointer length).
+
+    @param buf The source buffer.
     @param off The read offset.
-    @returns [OEL_Some (l, 5ul)] when the length byte is [0x03], [OEL_None]
-    otherwise (a length over 3 is rejected for the fixed [label3] view). *)
+    @returns [ODL_Some (spec, len)] on a well-formed label, else [ODL_None],
+             where [spec] carries the octet length and the content slice. *)
 fn decode_label (buf: A.array U8.t) (off: U32.t)
     (#s0: erased (Seq.seq U8.t))
     requires
       A.pts_to buf s0 **
-      pure (U32.v off + 5 <= A.length buf /\ U32.v off + 4 < 4294967296 /\
-            A.length buf == Seq.length s0)
-    returns r: opt_label3
+      pure (U32.v off + 65 <= A.length buf /\
+            A.length buf == Seq.length s0 /\
+            U32.v off + 64 < u32_max)
+    returns r: opt_label
     ensures
       A.pts_to buf s0 **
       pure (
         A.length buf == Seq.length s0 /\
-        U32.v off + 5 <= A.length buf /\
-        (if Seq.index s0 (U32.v off) == label_len_byte
-         then r == OEL_Some (label3_of_indices s0 (U32.v off + 1), 5ul)
-         else r == OEL_None))
+        U32.v off + 65 <= A.length buf /\
+        (let lb = Seq.index s0 (U32.v off) in
+         let v = U8.v lb in
+         if 1 <= v && v <= 63
+         then r == ODL_Some (uint8_to_uint32 lb)
+         else r == ODL_None))
 {
   A.pts_to_len buf;
-  let j0 = US.uint32_to_sizet off;
-  let j1 = US.uint32_to_sizet (U32.add off 1ul);
-  let j2 = US.uint32_to_sizet (U32.add off 2ul);
-  let j3 = US.uint32_to_sizet (U32.add off 3ul);
-  let len = buf.(j0);
-  let c0 = buf.(j1);
-  let c1 = buf.(j2);
-  let c2 = buf.(j3);
-  if U8.eq len label_len_byte {
-    OEL_Some ({ b0 = c0; b1 = c1; b2 = c2 }, 5ul)
+  let joff = US.uint32_to_sizet off;
+  let lb = buf.(joff);
+  if (U8.lt lb 1uy || U8.gt lb 63uy) {
+    ODL_None
   } else {
-    OEL_None
+    ODL_Some (uint8_to_uint32 lb)
   }
 }
 
 
-(* ── Roundtrip ──────────────────────────────────────────────────────── *)
+(* ========================================================================
+   Roundtrip
+   ======================================================================== *)
 
 
 (** [lemma_pulse_label_roundtrip] — encode then decode preserves the label.
 
-    @param l The label to roundtrip.
-    @param buf The buffer (must hold at least 5 bytes at [off]).
+    @param src The content octets.
+    @param len The label octet count (1..63).
+    @param dst The buffer (holds [len+2] bytes at [off]).
     @param off The offset.
-    @returns [(5ul, OEL_Some (l, 5ul))].
-    Proves [decode_label buf off] after [encode_label l buf off] returns
-    [OEL_Some (l, 5ul)], and the `0x00` terminator remains at [off + 4]. *)
-fn lemma_pulse_label_roundtrip (l: label3) (buf: A.array U8.t) (off: U32.t)
-    (#s0: erased (Seq.seq U8.t))
+    @returns [(len+2, ODL_Some len)] — encode then decode recovers the label
+             length, and the content octets in [dst] equal [src[0..len)]. *)
+fn lemma_pulse_label_roundtrip (src: A.array U8.t) (len: U32.t) (dst: A.array U8.t) (off: U32.t)
+    (#src0: erased (Seq.seq U8.t))
+    (#dst0: erased (Seq.seq U8.t))
     requires
-      A.pts_to buf s0 **
-      pure (U32.v off + 5 <= A.length buf /\ U32.v off + 4 < 4294967296)
-    returns res: (U32.t & opt_label3)
+      A.pts_to src src0 **
+      A.pts_to dst dst0 **
+      pure (1 <= U32.v len /\ U32.v len <= 63 /\
+            U32.v len <= A.length src /\
+            U32.v off + U32.v len + 2 <= A.length dst /\
+            U32.v off + U32.v len + 1 < u32_max /\
+            U32.v off + 65 <= A.length dst /\
+            U32.v off + 64 < u32_max)
+    returns res: (U32.t & opt_label)
     ensures
       exists* (s1: Seq.seq U8.t).
-        A.pts_to buf s1 **
-        pure (res == (5ul, OEL_Some (l, 5ul)))
+        A.pts_to src src0 **
+        A.pts_to dst s1 **
+        pure (res == (U32.add_mod len 2ul, ODL_Some len))
 {
-  let w = encode_label l buf off;
-  let r = decode_label buf off;
+  let w = encode_label src len dst off;
+  let r = decode_label dst off;
   (w, r)
 }

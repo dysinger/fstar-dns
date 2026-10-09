@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Wire form is now genuinely variable-length (1..63 octets).**
+  `Network.DNS.Pulse.encode_label`/`decode_label` replaced the fixed 3-byte
+  `label3` slice with the real RFC 1035 §3.1 wire form
+  `<length byte><1..63 octets><0x00>`: `encode_label (src, len, dst, off)`
+  copies `len` content octets via a verified Pulse `while` loop (a
+  separation-logic invariant with a `len`-progress measure) and writes the
+  `0x00` root terminator; `decode_label` reads the length byte and returns
+  `ODL_Some len` / `ODL_None`.  0-admit, extracting to C11 (`-Wall -Wextra
+  -Werror`) / OCaml / F#.
 - Re-expressed the dotted domain form over the new `sep_by1` codec combinator
   (`domain_codec = sep_by1 label_codec (byte_val 0x2Euy) 127`); deleted the
   bespoke dotted-form scanners (`decode_domain_go`, `encode_labels`,

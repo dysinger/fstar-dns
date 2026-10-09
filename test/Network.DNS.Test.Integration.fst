@@ -140,10 +140,10 @@ let _decode_label = decode_label
 let _lemma_pulse_label_roundtrip = lemma_pulse_label_roundtrip
 
 
-(* The Pulse spec mirrors [label3_to_seq]/[label3_of_indices]/[label_len_byte]
-   are [noextract]; they are transitively covered by [encode_label]/
-   [decode_label] (bound above), the same policy as [fstar-basen]/
-   [fstar-uuid]. *)
+(* The Pulse constants [root_byte]/[label_max_len]/[u32_max] and the cast
+   bridge [lemma_cast_roundtrip] are [noextract] or plain values; they are
+   transitively covered by [encode_label]/[decode_label] (bound above), the
+   same policy as [fstar-basen]/[fstar-uuid]. *)
 
 
 #pop-options
