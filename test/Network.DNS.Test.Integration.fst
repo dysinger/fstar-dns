@@ -35,6 +35,10 @@ let _label_codec = label_codec
 let _domain_codec = domain_codec
 (** [domain_wfcv] *)
 let _domain_wfcv = domain_wfcv
+(** [domain_wfcv_prop] *)
+let _domain_wfcv_prop = domain_wfcv_prop
+(** [domain_rest_cond] *)
+let _domain_rest_cond = domain_rest_cond
 (** [dot_byte] *)
 let _dot_byte = dot_byte
 (** [encode_domain] *)
@@ -138,12 +142,19 @@ let _decode_label = decode_label
 
 (** [lemma_pulse_label_roundtrip] *)
 let _lemma_pulse_label_roundtrip = lemma_pulse_label_roundtrip
+(** [lemma_cast_roundtrip] *)
+let _lemma_cast_roundtrip = lemma_cast_roundtrip
 
 
-(* The Pulse constants [root_byte]/[label_max_len]/[u32_max] and the cast
-   bridge [lemma_cast_roundtrip] are [noextract] or plain values; they are
-   transitively covered by [encode_label]/[decode_label] (bound above), the
-   same policy as [fstar-basen]/[fstar-uuid]. *)
+(** Pulse constants — [root_byte]/[u32_max] are value-level public defs and
+    anchored like any other [let]; [lemma_cast_roundtrip] is a [noextract]
+    [Lemma], anchored above. *)
+
+
+(** [root_byte] *)
+let _root_byte = root_byte
+(** [u32_max] *)
+let _u32_max = u32_max
 
 
 #pop-options

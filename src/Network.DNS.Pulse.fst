@@ -132,10 +132,16 @@ fn encode_label (src: A.array U8.t) (len: U32.t) (dst: A.array U8.t) (off: U32.t
               U32.v off + U32.v len + 2 <= A.length dst /\
               Seq.length s1 == A.length dst /\
               U32.v len + 2 < u32_max /\
+              Seq.length dst0 == A.length dst /\
               Seq.index s1 (U32.v off) == uint32_to_uint8 len /\
               (forall (j: nat). j < U32.v len ==>
                  Seq.index s1 (U32.v off + 1 + j) == Seq.index src0 j) /\
-              Seq.index s1 (U32.v off + 1 + U32.v len) == root_byte)) **
+              Seq.index s1 (U32.v off + 1 + U32.v len) == root_byte /\
+              (forall (j: nat). j < U32.v off ==>
+                 Seq.index s1 j == Seq.index dst0 j) /\
+              (forall (j: nat). U32.v off + U32.v len + 2 <= j /\
+                               j < Seq.length s1 ==>
+                 Seq.index s1 j == Seq.index dst0 j))) **
       pure (w == U32.add_mod len 2ul)
 {
   A.pts_to_len src;
@@ -157,9 +163,15 @@ fn encode_label (src: A.array U8.t) (len: U32.t) (dst: A.array U8.t) (off: U32.t
         Seq.length src0 == A.length src /\
         U32.v off + U32.v len + 2 <= A.length dst /\
         Seq.length s == A.length dst /\
+        Seq.length dst0 == A.length dst /\
         Seq.index s (U32.v off) == uint32_to_uint8 len /\
         (forall (j: nat). j < US.v vi ==>
-           Seq.index s (U32.v off + 1 + j) == Seq.index src0 j))
+           Seq.index s (U32.v off + 1 + j) == Seq.index src0 j) /\
+        (forall (j: nat). j < U32.v off ==>
+           Seq.index s j == Seq.index dst0 j) /\
+        (forall (j: nat). U32.v off + U32.v len + 2 <= j /\
+                         j < Seq.length s ==>
+           Seq.index s j == Seq.index dst0 j))
     decreases (U32.v len - US.v !i)
   {
     let vi = !i;

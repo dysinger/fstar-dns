@@ -80,4 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Notes
 
-- Zero admits / zero magic / zero `assume` across all modules.
+- Zero admits / zero magic / zero `assume` in `src/`.  The integration test
+  disables SMT (`--admit_smt_queries true`) for bare coverage anchors only —
+  each anchor is a `let _ = f` value reference that emits no verification
+  conditions, so no claim is admitted.

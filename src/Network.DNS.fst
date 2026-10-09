@@ -246,7 +246,16 @@ let domain_codec : codec domain_name =
 
 
 (** [domain_wfcv] — a [domain_name] is well-formed for [domain_codec]:
-    definitionally [domain_codec.wfcv d]. *)
+    definitionally [domain_codec.wfcv d].  Unfolding the combinator, this is
+    the [sep_by1_opt_trailing] well-formedness folded through [label_codec]
+    and the [byte_val dot_byte] separator: a non-empty label list, each label
+    a 1..63-octet [is_label_char] run, where the separator is itself
+    well-formed ([dot_byte.wfcv ()]) and non-empty ([|dot_byte.enc ()| > 0]) —
+    i.e. the condition [sep_by1_opt_trailing.roundtrip] needs to discharge its
+    delimiter framing.
+
+    @param d The name to test.
+    @returns [domain_codec.wfcv d]. *)
 let domain_wfcv (d: domain_name) : bool =
   domain_codec.wfcv d
 
