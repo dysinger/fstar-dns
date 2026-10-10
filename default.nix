@@ -61,6 +61,15 @@ let
 
   meta = {
     license = lib.licenses.agpl3Plus;
+    # The LICENSE.md blurb mentions commercial dual-licensing terms.  The
+    # SPDX above records the code license (AGPL-3.0-or-later); the commercial
+    # terms are out-of-band (negotiated directly with the author), not a
+    # second SPDX identifier.  See LICENSE.md.
+    longDescription = ''
+      A formally verified DNS (RFC 1034/1035) library in F*.  The code license
+      is AGPL-3.0-or-later; commercial licensing terms are available
+      out-of-band from the author (see LICENSE.md).
+    '';
     maintainers = [
       {
         name = "Tim Dysinger";
@@ -77,6 +86,35 @@ let
     export CODEC_CHECKED="${codec-checked}"
   '';
 
+  # Shared preamble for the extract backends (native + fsharp): compute the
+  # Pulse include flags and seed the `cache` dir with the pre-verified
+  # `.checked` files (F* ulib + codec) so cross-module inlining resolves.
+  # Assumes `cache` already exists in $out's build dir.
+  seed-cache = ''
+    ULIB="${ulib}"
+    PULSE_INCS=""
+    for d in ${lib.concatStringsSep " " pulse-incs}; do
+      PULSE_INCS="$PULSE_INCS --include $d"
+    done
+    cp ${fstar-checked}/*.checked cache/ 2>/dev/null || true
+    cp ${codec-checked}/*.checked cache/ 2>/dev/null || true
+  '';
+
+  # Verify Network.DNS (pure spec) + Network.DNS.Pulse (Pulse leaf) in
+  # dependency order into `cache`, so a later extraction pass can resolve our
+  # own modules' `.checked` files.  Shared by native + fsharp (and ocaml-src
+  # does its own two-step verify-extract because it emits OCaml).
+  verify-both = ''
+    for m in Network.DNS Network.DNS.Pulse; do
+      ${fstar-exe} \
+        --no_default_includes --include "$ULIB" $PULSE_INCS --include ${codec-src}/src --include ./src \
+        --already_cached Prims,FStar,Pulse.Nolib,Pulse.Lib,Pulse.Class,PulseCore \
+        --z3rlimit 120 \
+        --cache_checked_modules --cache_dir cache --odir cache \
+        src/$m.fst || exit 1
+    done
+  '';
+
   checked = mkDerivation {
     pname = "${pname}-checked";
     version = "0.1.0";
@@ -89,8 +127,16 @@ let
     buildPhase = ''
       ${make-env}
       make check OUT="$out"
-      # Flatten $(OUT)/checked/*.checked to $out/*.checked.
-      if [ -d "$out/checked" ]; then mv "$out"/checked/*.checked "$out"/ 2>/dev/null || true; rmdir "$out/checked"; fi
+      # Flatten $(OUT)/checked/*.checked to $out/*.checked.  Robust to whether
+      # `make check` wrote a `checked/` subdir (the Makefile $OUT/checked
+      # layout) or straight to $out.  Emit a manifest so consumers of the
+      # `checked` artifact can locate the `.checked` tree without a fixed
+      # dirname assumption.
+      if [ -d "$out/checked" ]; then
+        find "$out/checked" -maxdepth 1 -name '*.checked' -exec sh -c 'mv "$1" "$out/"' _ {} \;
+        rmdir "$out/checked" 2>/dev/null || true
+      fi
+      (cd "$out" && ls *.checked 2>/dev/null | sort) > "$out/manifest"
     '';
     installPhase = "true";
   };
@@ -106,6 +152,11 @@ let
   # The dns pure spec PLUS the codec pure spec (`Data.Codec.Types`,
   # `Data.Codec`), extracted locally (NOT from `codec-ocaml`) so the raw
   # top-level `Data_Codec_Types`/`Data_Codec` names resolve unwrapped.
+  # NOTE (maintenance, 8.24): the hard-wired `Data_Codec_Types`/`Data_Codec`
+  # extraction list mirrors the `fstar-codec` repo's own pure-module list
+  # (its `default.nix` `pure-modules`).  If the codec repo adds/renames its
+  # pure spec modules, update this list (and the `m` loop below) to match
+  # `fstar-codec`'s `default.nix` `pure-modules`.
   ocaml-modules = (map (m: builtins.replaceStrings [ "." ] [ "_" ] m) pure-modules) ++ [
     "Data_Codec_Types"
     "Data_Codec"
@@ -222,23 +273,8 @@ let
     inherit meta;
     buildPhase = ''
       mkdir -p $out cache
-      ULIB="${ulib}"
-      PULSE_INCS=""
-      for d in ${lib.concatStringsSep " " pulse-incs}; do
-        PULSE_INCS="$PULSE_INCS --include $d"
-      done
-      cp ${fstar-checked}/*.checked cache/ 2>/dev/null || true
-      cp ${codec-checked}/*.checked cache/ 2>/dev/null || true
-      # Verify in dependency order into a cache so cross-module inlining can
-      # find our own modules' `.checked` files.
-      for m in Network.DNS Network.DNS.Pulse; do
-        ${fstar-exe} \
-          --no_default_includes --include "$ULIB" $PULSE_INCS --include ${codec-src}/src --include ./src \
-          --already_cached Prims,FStar,Pulse.Nolib,Pulse.Lib,Pulse.Class,PulseCore \
-          --z3rlimit 120 \
-          --cache_checked_modules --cache_dir cache --odir cache \
-          src/$m.fst || exit 1
-      done
+      ${seed-cache}
+      ${verify-both}
       # Extract the whole `Network.DNS.Pulse` module to C (library mode).
       ${fstar-exe} \
         --no_default_includes --include "$ULIB" $PULSE_INCS --include ${codec-src}/src --include ./src --include cache \
@@ -284,21 +320,8 @@ let
       export DOTNET_NOLOGO=1
       export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
       export HOME=$NIX_BUILD_TOP
-      ULIB="${ulib}"
-      PULSE_INCS=""
-      for d in ${lib.concatStringsSep " " pulse-incs}; do
-        PULSE_INCS="$PULSE_INCS --include $d"
-      done
-      cp ${fstar-checked}/*.checked cache/ 2>/dev/null || true
-      cp ${codec-checked}/*.checked cache/ 2>/dev/null || true
-      for m in Network.DNS Network.DNS.Pulse; do
-        ${fstar-exe} \
-          --no_default_includes --include "$ULIB" $PULSE_INCS --include ${codec-src}/src --include ./src \
-          --already_cached Prims,FStar,Pulse.Nolib,Pulse.Lib,Pulse.Class,PulseCore \
-          --z3rlimit 120 \
-          --cache_checked_modules --cache_dir cache --odir cache \
-          src/$m.fst || exit 1
-      done
+      ${seed-cache}
+      ${verify-both}
       ${fstar-exe} \
         --no_default_includes --include "$ULIB" $PULSE_INCS --include ${codec-src}/src --include ./src --include cache \
         --already_cached Prims,FStar,Pulse.Nolib,Pulse.Lib,Pulse.Class,PulseCore \
